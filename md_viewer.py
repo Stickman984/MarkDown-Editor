@@ -11,7 +11,6 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 from tkinter.scrolledtext import ScrolledText
 import markdown
-from tkhtmlview import HTMLScrolledText, html_parser
 from pathlib import Path
 import webbrowser
 import subprocess
@@ -162,12 +161,12 @@ class MarkdownViewer:
         tab_frame = ttk.Frame(self.notebook)
         
         # 创建自定义HTML显示组件
-        html_view = CustomHTMLScrolledText(
+        html_view = MarkdownHtmlFrame(
             tab_frame,
-            html="<h1>欢迎使用 Markdown 查看器</h1><p>请打开一个 Markdown 文件开始使用。</p>",
-            wrap=tk.WORD,
             viewer=self  # 传递viewer引用以处理链接
         )
+        # 设置初始内容
+        html_view.set_html("<h1>欢迎使用 Markdown 查看器</h1><p>请打开一个 Markdown 文件开始使用。</p>")
         html_view.pack(fill=tk.BOTH, expand=True)
         
         # 存储标签页数据
@@ -175,7 +174,7 @@ class MarkdownViewer:
             'frame': tab_frame,
             'html_view': html_view,
             'current_file': None,
-            'font_size': 12,
+            'zoom_level': 1.0,
             'md': markdown.Markdown(extensions=[
                 'extra', 'codehilite', 'toc', 'fenced_code', 'tables', 'nl2br'
             ])
@@ -254,11 +253,14 @@ class MarkdownViewer:
             tab_data['md'].reset()
             html_content = tab_data['md'].convert(md_content)
             
+            # 存储原始HTML以便缩放时使用
+            tab_data['raw_html'] = html_content
+            
             # 添加CSS样式
-            styled_html = self.wrap_html(html_content, tab_data['font_size'])
+            styled_html = self.wrap_html(html_content, tab_data['zoom_level'])
             
             # 显示HTML
-            tab_data['html_view'].set_html(styled_html, strip=False)
+            tab_data['html_view'].set_html(styled_html)
             
             # 更新状态
             tab_data['current_file'] = filename
@@ -270,83 +272,82 @@ class MarkdownViewer:
             self.root.title(f"Markdown 文档查看器 - {os.path.basename(filename)}")
             self.statusbar.config(text=f"已加载: {filename}")
             
-            # 更新最近文件列表
-            self.add_to_recent(filename)
-            
         except Exception as e:
             messagebox.showerror("错误", f"无法打开文件:\n{str(e)}")
     
     def handle_link_click(self, url):
         """处理链接点击事件"""
-        print(f"\n[DEBUG] ===== handle_link_click called =====")
-        print(f"[DEBUG] Raw URL: {url}")
-        
         try:
             # 解码URL
             decoded_url = urllib.parse.unquote(url)
-            print(f"[DEBUG] Decoded URL: {decoded_url}")
+            
+            # 处理 file:// 前缀
+            if decoded_url.startswith('file:///'):
+                decoded_url = decoded_url[8:]
+            elif decoded_url.startswith('file:'):
+                decoded_url = decoded_url[5:]
+            
+            # Windows下，如果路径以 / 开头且包含 : (例如 /D:/path)，去掉开头的 /
+            if os.name == 'nt' and decoded_url.startswith('/') and len(decoded_url) > 2 and decoded_url[2] == ':':
+                decoded_url = decoded_url[1:]
+            
+            # 规范化路径分隔符
+            decoded_url = os.path.normpath(decoded_url)
             
             # 处理相对路径
-            tab_data = self.get_current_tab_data()
-            if tab_data and tab_data['current_file']:
-                base_dir = os.path.dirname(tab_data['current_file'])
-                # 如果是相对路径，转换为绝对路径
-                if not os.path.isabs(decoded_url):
+            # 如果路径不存在，且不是绝对路径，尝试相对于当前文件解析
+            if not os.path.exists(decoded_url) and not os.path.isabs(decoded_url):
+                tab_data = self.get_current_tab_data()
+                if tab_data and tab_data['current_file']:
+                    base_dir = os.path.dirname(tab_data['current_file'])
                     decoded_url = os.path.normpath(os.path.join(base_dir, decoded_url))
             
             # 检查是否是本地文件或文件夹
-            print(f"[DEBUG] Checking if path exists: {decoded_url}")
             if os.path.exists(decoded_url):
-                print(f"[DEBUG] Path exists!")
                 if os.path.isdir(decoded_url):
                     # 文件夹 - 使用资源管理器打开
-                    print(f"[DEBUG] Is directory, opening in Explorer")
                     os.startfile(decoded_url)
                     self.statusbar.config(text=f"已在资源管理器中打开: {decoded_url}")
                 elif os.path.isfile(decoded_url):
                     # 文件 - 根据扩展名处理
                     ext = os.path.splitext(decoded_url)[1].lower()
-                    print(f"[DEBUG] Is file, extension: {ext}")
+                    
                     if ext in ['.md', '.markdown', '.mdown']:
                         # Markdown文件 - 在新标签页打开
-                        print(f"[DEBUG] Opening .md file in new tab")
                         self.load_file(decoded_url, in_new_tab=True)
                     elif ext in ['.txt', '.log', '.json', '.xml', '.yaml', '.yml', 
                                 '.py', '.js', '.java', '.c', '.cpp', '.h', '.cs',
                                 '.html', '.css', '.php', '.rb', '.go', '.rs', '.sh',
                                 '.bat', '.ini', '.cfg', '.conf']:
                         # 文本文件 - 使用Notepad++打开
-                        print(f"[DEBUG] Text file detected")
                         if os.path.exists(self.notepadpp_path):
-                            print(f"[DEBUG] Opening with Notepad++: {self.notepadpp_path}")
                             subprocess.Popen([self.notepadpp_path, decoded_url])
                             self.statusbar.config(text=f"已在Notepad++中打开: {os.path.basename(decoded_url)}")
                         else:
                             # Notepad++不存在，使用系统默认程序
-                            print(f"[DEBUG] Notepad++ not found, using startfile")
                             os.startfile(decoded_url)
                             self.statusbar.config(text=f"已打开: {os.path.basename(decoded_url)}")
                     else:
                         # 其他文件 - 使用系统默认程序
-                        print(f"[DEBUG] Other file type, using startfile")
                         os.startfile(decoded_url)
                         self.statusbar.config(text=f"已打开: {os.path.basename(decoded_url)}")
             else:
                 # 不是本地文件，可能是URL - 使用默认浏览器打开
-                print(f"[DEBUG] Path does not exist, treating as URL")
                 webbrowser.open(url)
                 self.statusbar.config(text=f"已在浏览器中打开: {url}")
         
         except Exception as e:
             messagebox.showerror("错误", f"无法打开链接:\n{str(e)}")
             
-    def wrap_html(self, content, font_size=12):
+    def wrap_html(self, content, zoom_level=1.0):
         """包装HTML内容并添加样式"""
+        base_font_size = int(14 * zoom_level)
+        
         css = f"""
         <style>
             body {{
                 font-family: 'Segoe UI', 'Microsoft YaHei', Arial, sans-serif;
-                font-size: {font_size}px;
+                font-size: {base_font_size}px;
                 line-height: 1.6;
                 color: #333;
                 max-width: 900px;
@@ -374,23 +375,26 @@ class MarkdownViewer:
             h3 {{ font-size: 1.25em; }}
             h4 {{ font-size: 1em; }}
             code {{
-                background-color: #f6f8fa;
+                background-color: #282c34;
+                color: #abb2bf;
                 padding: 0.2em 0.4em;
                 margin: 0;
                 font-size: 85%;
                 border-radius: 3px;
-                font-family: 'Consolas', 'Monaco', monospace;
+                font-family: 'Consolas', 'Courier New', 'Cascadia Code', monospace;
             }}
             pre {{
-                background-color: #f6f8fa;
+                background-color: #282c34;
                 padding: 16px;
                 overflow: auto;
                 font-size: 85%;
                 line-height: 1.45;
-                border-radius: 3px;
+                border-radius: 6px;
+                border: 1px solid #3e4451;
             }}
             pre code {{
                 background-color: transparent;
+                color: #abb2bf;
                 padding: 0;
             }}
             blockquote {{
@@ -462,26 +466,33 @@ class MarkdownViewer:
         if tab_data and tab_data['current_file']:
             self.load_file(tab_data['current_file'])
             
+    def update_zoom(self):
+        """应用缩放"""
+        tab_data = self.get_current_tab_data()
+        if tab_data and 'raw_html' in tab_data:
+            styled_html = self.wrap_html(tab_data['raw_html'], tab_data['zoom_level'])
+            tab_data['html_view'].set_html(styled_html)
+
     def zoom_in(self):
         """放大"""
         tab_data = self.get_current_tab_data()
         if tab_data:
-            tab_data['font_size'] += 2
-            self.refresh()
+            tab_data['zoom_level'] += 0.1
+            self.update_zoom()
         
     def zoom_out(self):
         """缩小"""
         tab_data = self.get_current_tab_data()
-        if tab_data and tab_data['font_size'] > 8:
-            tab_data['font_size'] -= 2
-            self.refresh()
+        if tab_data and tab_data['zoom_level'] > 0.2:
+            tab_data['zoom_level'] -= 0.1
+            self.update_zoom()
             
     def zoom_reset(self):
         """重置缩放"""
         tab_data = self.get_current_tab_data()
         if tab_data:
-            tab_data['font_size'] = 12
-            self.refresh()
+            tab_data['zoom_level'] = 1.0
+            self.update_zoom()
         
     def add_to_recent(self, filename):
         """添加到最近文件列表"""
@@ -529,92 +540,29 @@ Markdown 文档查看器 v2.0
 
 
 
-class CustomHLinkSlot:
-    """自定义链接槽，替换tkhtmlview的默认HLinkSlot"""
-    def __init__(self, w, tag_name, url, viewer):
-        self._w = w
-        self.tag_name = tag_name
-        self.URL = url
+
+
+
+from tkinterweb import HtmlFrame
+
+class MarkdownHtmlFrame(HtmlFrame):
+    """基于tkinterweb的Markdown显示组件"""
+    def __init__(self, master, viewer=None, **kwargs):
         self.viewer = viewer
-        print(f"[DEBUG] CustomHLinkSlot created for URL: {url}")
-    
-    def call(self, event):
-        """链接被点击时调用"""
-        print(f"\n[DEBUG] ===== CustomHLinkSlot.call() triggered =====")
-        print(f"[DEBUG] URL clicked: {self.URL}")
+        # 禁用默认的消息打印，并传入链接点击回调
+        super().__init__(master, messages_enabled=False, on_link_click=self._handle_link_click, **kwargs)
         
+    def _handle_link_click(self, url):
+        """处理链接点击"""
         if self.viewer:
-            print(f"[DEBUG] Calling viewer.handle_link_click()")
-            self.viewer.handle_link_click(self.URL)
+            self.viewer.handle_link_click(url)
         else:
-            print(f"[DEBUG] No viewer, using webbrowser.open()")
-            webbrowser.open(self.URL)
-        
-        # 改变链接颜色表示已访问
-        self._w.tag_config(self.tag_name, foreground="purple")
-    
-    def enter(self, event):
-        """鼠标进入链接区域"""
-        self._w.config(cursor="hand2")
-    
-    def leave(self, event):
-        """鼠标离开链接区域"""
-        self._w.config(cursor="")
-
-
-class CustomHTMLScrolledText(HTMLScrolledText):
-    """自定义HTML显示组件，支持自定义链接处理"""
-    def __init__(self, *args, viewer=None, **kwargs):
-        self.viewer = viewer
-        print("[DEBUG] CustomHTMLScrolledText.__init__ called")
-        print(f"[DEBUG] viewer: {viewer}")
-        super().__init__(*args, **kwargs)
-        print("[DEBUG] CustomHTMLScrolledText initialized successfully")
-    
-    def set_html(self, html, strip=True):
-        """重写set_html以替换链接处理器"""
-        print(f"[DEBUG] CustomHTMLScrolledText.set_html called")
-        
-        # 先调用父类方法渲染HTML
-        super().set_html(html, strip)
-        
-        # 替换所有的HLinkSlot为CustomHLinkSlot
-        print(f"[DEBUG] Replacing link handlers...")
-        if hasattr(self.html_parser, 'hlink_slots'):
-            print(f"[DEBUG] Found {len(self.html_parser.hlink_slots)} link slots")
+            webbrowser.open(url)
             
-            # 保存原始的hlink_slots
-            original_slots = self.html_parser.hlink_slots
-            
-            # 创建新的自定义链接槽列表
-            custom_slots = []
-            
-            for slot in original_slots:
-                # 获取原始slot的信息
-                tag_name = slot.tag_name
-                url = slot.URL
-                
-                print(f"[DEBUG] Replacing slot for tag={tag_name}, url={url}")
-                
-                # 创建自定义slot
-                custom_slot = CustomHLinkSlot(self, tag_name, url, self.viewer)
-                custom_slots.append(custom_slot)
-                
-                # 解绑原始事件
-                self.tag_unbind(tag_name, "<Button-1>")
-                self.tag_unbind(tag_name, "<Enter>")
-                self.tag_unbind(tag_name, "<Leave>")
-                
-                # 绑定新的事件处理器
-                self.tag_bind(tag_name, "<Button-1>", custom_slot.call)
-                self.tag_bind(tag_name, "<Enter>", custom_slot.enter)
-                self.tag_bind(tag_name, "<Leave>", custom_slot.leave)
-            
-            # 替换html_parser的hlink_slots
-            self.html_parser.hlink_slots = custom_slots
-            print(f"[DEBUG] Successfully replaced all {len(custom_slots)} link handlers")
-        else:
-            print(f"[DEBUG] WARNING: html_parser has no hlink_slots attribute")
+    def set_html(self, html_content):
+        """设置HTML内容"""
+        # load_html是tkinterweb的方法
+        self.load_html(html_content)
 
 
 
