@@ -256,8 +256,11 @@ class MarkdownViewer:
             # 存储原始HTML以便缩放时使用
             tab_data['raw_html'] = html_content
             
+            # 获取文件所在目录作为基准路径
+            base_dir = os.path.dirname(filename)
+            
             # 添加CSS样式
-            styled_html = self.wrap_html(html_content, tab_data['zoom_level'])
+            styled_html = self.wrap_html(html_content, tab_data['zoom_level'], base_path=base_dir)
             
             # 显示HTML
             tab_data['html_view'].set_html(styled_html)
@@ -339,9 +342,18 @@ class MarkdownViewer:
         except Exception as e:
             messagebox.showerror("错误", f"无法打开链接:\n{str(e)}")
             
-    def wrap_html(self, content, zoom_level=1.0):
+    def wrap_html(self, content, zoom_level=1.0, base_path=None):
         """包装HTML内容并添加样式"""
         base_font_size = int(14 * zoom_level)
+        
+        # 如果有 base_path，生成 base 标签用于正确解析相对链接
+        base_tag = ""
+        if base_path:
+            # 将 Windows 路径转换为 URL 格式
+            base_url = base_path.replace('\\', '/')
+            if not base_url.endswith('/'):
+                base_url += '/'
+            base_tag = f'<base href="file:///{base_url}">'
         
         css = f"""
         <style>
@@ -452,6 +464,7 @@ class MarkdownViewer:
         <html>
         <head>
             <meta charset="utf-8">
+            {base_tag}
             {css}
         </head>
         <body>
@@ -470,7 +483,8 @@ class MarkdownViewer:
         """应用缩放"""
         tab_data = self.get_current_tab_data()
         if tab_data and 'raw_html' in tab_data:
-            styled_html = self.wrap_html(tab_data['raw_html'], tab_data['zoom_level'])
+            base_dir = os.path.dirname(tab_data['current_file']) if tab_data['current_file'] else None
+            styled_html = self.wrap_html(tab_data['raw_html'], tab_data['zoom_level'], base_path=base_dir)
             tab_data['html_view'].set_html(styled_html)
 
     def zoom_in(self):
