@@ -1,0 +1,8 @@
+./dist
+*.png
+*.jpg
+*.gif
+*.ico
+*.bat
+*.spec
+*.pyc
