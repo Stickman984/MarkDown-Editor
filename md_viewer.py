@@ -51,6 +51,18 @@ class MarkdownViewer:
         self.root.config(menu=menubar)
         
         # 文件菜单
+        # Notepad++路径
+        self.notepadpp_path = r"C:\Program Files\Notepad++\notepad++.exe"
+        
+        # 创建UI
+        self.create_menu()
+        self.create_toolbar()
+    def create_menu(self):
+        """创建菜单栏"""
+        menubar = tk.Menu(self.root)
+        self.root.config(menu=menubar)
+        
+        # 文件菜单
         file_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="文件(F)", menu=file_menu)
         file_menu.add_command(label="新建标签页(N)", command=self.new_tab, accelerator="Ctrl+T")
@@ -150,6 +162,8 @@ class MarkdownViewer:
         self.root.bind('<Control-equal>', lambda e: self.zoom_in())
         self.root.bind('<Control-minus>', lambda e: self.zoom_out())
         self.root.bind('<Control-0>', lambda e: self.zoom_reset())
+        # 添加 Ctrl+滚轮缩放
+        self.root.bind('<Control-MouseWheel>', self.on_global_mousewheel_zoom)
         
     def setup_drag_drop(self):
         """设置拖放支持"""
@@ -169,7 +183,7 @@ class MarkdownViewer:
         html_view.set_html("<h1>欢迎使用 Markdown 查看器</h1><p>请打开一个 Markdown 文件开始使用。</p>")
         html_view.pack(fill=tk.BOTH, expand=True)
         
-        # 存储标签页数据
+        # 存储标签页数据（先创建 tab_data，后面绑定事件时需要）
         tab_data = {
             'frame': tab_frame,
             'html_view': html_view,
@@ -182,6 +196,11 @@ class MarkdownViewer:
         
         # 将数据存储在框架对象中
         tab_frame.tab_data = tab_data
+        
+        # 绑定Ctrl+滚轮缩放到 tab_frame（而不是 html_view，因为 tkinterweb 会拦截事件）
+        tab_frame.bind("<Control-MouseWheel>", lambda e: self.on_mousewheel_zoom(e, tab_frame))
+        # 同时绑定到 html_view，以防万一
+        html_view.bind("<Control-MouseWheel>", lambda e: self.on_mousewheel_zoom(e, tab_frame))
         
         # 添加标签页
         self.notebook.add(tab_frame, text="新标签页")
@@ -344,7 +363,10 @@ class MarkdownViewer:
             
     def wrap_html(self, content, zoom_level=1.0, base_path=None):
         """包装HTML内容并添加样式"""
+        # 使用 font-size 缩放，同时用显式宽度缩放图片
         base_font_size = int(14 * zoom_level)
+        # 图片使用百分比宽度来缩放，max-width 随 zoom_level 变化
+        image_max_width = int(100 * zoom_level)
         
         # 如果有 base_path，生成 base 标签用于正确解析相对链接
         base_tag = ""
@@ -440,7 +462,7 @@ class MarkdownViewer:
                 text-decoration: underline;
             }}
             img {{
-                max-width: 100%;
+                max-width: {image_max_width}%;
                 height: auto;
             }}
             ul, ol {{
@@ -483,9 +505,65 @@ class MarkdownViewer:
         """应用缩放"""
         tab_data = self.get_current_tab_data()
         if tab_data and 'raw_html' in tab_data:
+            # 尝试保存当前滚动位置
+            scroll_pos = 0.0
+            try:
+                # 关键修复：访问底层的 html 组件 (.html) 来获取滚动位置
+                # HtmlFrame 只是一个包装器，它的 yview() 可能不返回正确值
+                if hasattr(tab_data['html_view'], 'html'):
+                    # yview() 返回 (start, end) 元组
+                    scroll_pos = tab_data['html_view'].html.yview()[0]
+            except Exception as e:
+                print(f"[DEBUG] Cannot get scroll position: {e}")
+            
             base_dir = os.path.dirname(tab_data['current_file']) if tab_data['current_file'] else None
             styled_html = self.wrap_html(tab_data['raw_html'], tab_data['zoom_level'], base_path=base_dir)
             tab_data['html_view'].set_html(styled_html)
+            
+            # 恢复滚动位置
+            if scroll_pos > 0:
+                def restore_scroll():
+                    try:
+                        if hasattr(tab_data['html_view'], 'html'):
+                            tab_data['html_view'].html.yview_moveto(scroll_pos)
+                    except Exception:
+                        pass
+                
+                # 给一点时间让HTML渲染完成
+                self.root.after(50, restore_scroll)
+
+    def on_global_mousewheel_zoom(self, event):
+        """处理全局 Ctrl+滚轮缩放"""  
+        tab_data = self.get_current_tab_data()
+        if tab_data:
+            # Windows下，event.delta正数表示向上滚动（放大），负数表示向下滚动（缩小）
+            if event.delta > 0:
+                # 放大
+                tab_data['zoom_level'] = min(tab_data['zoom_level'] + 0.1, 3.0)
+            else:
+                # 缩小
+                tab_data['zoom_level'] = max(tab_data['zoom_level'] - 0.1, 0.2)
+            
+            self.update_zoom()
+
+    def on_mousewheel_zoom(self, event, tab_frame):
+        """处理Ctrl+滚轮缩放"""
+        tab_data = tab_frame.tab_data
+        if tab_data:
+            # Windows下，event.delta正数表示向上滚动（放大），负数表示向下滚动（缩小）
+            # delta通常是120的倍数
+            if event.delta > 0:
+                # 放大
+                tab_data['zoom_level'] = min(tab_data['zoom_level'] + 0.1, 3.0)
+            else:
+                # 缩小
+                tab_data['zoom_level'] = max(tab_data['zoom_level'] - 0.1, 0.2)
+            
+            # 应用缩放
+            if 'raw_html' in tab_data:
+                base_dir = os.path.dirname(tab_data['current_file']) if tab_data['current_file'] else None
+                styled_html = self.wrap_html(tab_data['raw_html'], tab_data['zoom_level'], base_path=base_dir, scroll_percent=None)
+                tab_data['html_view'].set_html(styled_html)
 
     def zoom_in(self):
         """放大"""
