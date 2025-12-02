@@ -225,6 +225,7 @@ class EditorTab(QWidget):
         
         # 安装事件过滤器以捕获Ctrl+滚轮缩放
         self.editor.installEventFilter(self)
+        self.editor.viewport().installEventFilter(self)  # 关键：也要监听viewport
         self.preview.installEventFilter(self)
     
     def eventFilter(self, obj, event):
@@ -236,7 +237,7 @@ class EditorTab(QWidget):
             wheel_event = event
             delta = wheel_event.angleDelta().y()
             
-            if obj == self.editor:
+            if obj == self.editor or obj == self.editor.viewport():
                 # 缩放编辑器
                 if delta > 0:
                     self.editor_zoom_level = min(self.editor_zoom_level + 0.1, 3.0)
