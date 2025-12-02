@@ -9,6 +9,7 @@
 - **实时预览**：左侧编辑 Markdown，右侧实时渲染 HTML 效果。
 - **同步滚动**：编辑器和预览窗口滚动位置自动同步。
 - **目录导航**：自动生成文档大纲，点击标题快速跳转（默认隐藏，可开启）。
+- **拖放支持**：支持直接拖拽文件到窗口或程序图标打开。
 
 ### 智能链接处理
 - **Markdown 文件** (`.md`)：自动在新标签页中打开。
@@ -57,4 +58,5 @@ python md_editor_qt.py
 如果需要打包成 `.exe` 文件，建议使用 PyInstaller：
 ```bash
 pyinstaller --noconsole --onefile --name="MarkdownEditor" md_editor_qt.py
+pyinstaller --windowed --name "MarkdownEditor" md_editor_qt.py
 ```

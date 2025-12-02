@@ -521,7 +521,30 @@ class MarkdownEditor(QMainWindow):
         self.create_statusbar()
         self.create_tab_widget()
         
+        # 启用拖放支持
+        self.setAcceptDrops(True)
+        
         # 不自动创建标签页，用户可以手动打开文件或新建
+    
+    def dragEnterEvent(self, event):
+        """拖拽进入事件"""
+        if event.mimeData().hasUrls():
+            event.accept()
+        else:
+            event.ignore()
+    
+    def dropEvent(self, event):
+        """拖放完成事件"""
+        files = [u.toLocalFile() for u in event.mimeData().urls()]
+        for file_path in files:
+            if os.path.exists(file_path):
+                # 检查是否是文件夹
+                if os.path.isdir(file_path):
+                    # 如果是文件夹，可以选择打开文件夹内的所有md文件，或者忽略
+                    # 这里简单处理：只处理文件
+                    pass
+                else:
+                    self.open_file_in_tab(file_path, in_new_tab=True)
     
     def create_menu(self):
         """创建菜单栏"""
@@ -1050,11 +1073,13 @@ def main():
     editor = MarkdownEditor()
     editor.show()
     
-    # 如果有命令行参数，尝试打开第一个文件
+    # 如果有命令行参数，尝试打开所有文件
     if len(sys.argv) > 1:
-        file_path = sys.argv[1]
-        if os.path.exists(file_path):
-            editor.open_file_in_tab(file_path)
+        for file_path in sys.argv[1:]:
+            if os.path.exists(file_path):
+                # 检查是否是文件
+                if os.path.isfile(file_path):
+                    editor.open_file_in_tab(file_path, in_new_tab=True)
     
     sys.exit(app.exec())
 
