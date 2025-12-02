@@ -189,6 +189,7 @@ class MarkdownViewer:
             'html_view': html_view,
             'current_file': None,
             'zoom_level': 1.0,
+            'zoom_timer': None,  # 用于防抖动
             'md': markdown.Markdown(extensions=[
                 'extra', 'codehilite', 'toc', 'fenced_code', 'tables', 'nl2br'
             ])
@@ -365,8 +366,21 @@ class MarkdownViewer:
         """包装HTML内容并添加样式"""
         # 使用 font-size 缩放，同时用显式宽度缩放图片
         base_font_size = int(14 * zoom_level)
-        # 图片使用百分比宽度来缩放，max-width 随 zoom_level 变化
-        image_max_width = int(100 * zoom_level)
+        
+        # 计算缩放后的布局参数
+        # 基础宽度 900px，随缩放比例调整
+        container_width = int(900 * zoom_level)
+        # 基础内边距 20px
+        padding = int(20 * zoom_level)
+        # 基础外边距 20px
+        margin = int(20 * zoom_level)
+        
+        # 标题间距
+        h_margin_top = int(24 * zoom_level)
+        h_margin_bottom = int(16 * zoom_level)
+        
+        # 代码块内边距
+        pre_padding = int(16 * zoom_level)
         
         # 如果有 base_path，生成 base 标签用于正确解析相对链接
         base_tag = ""
@@ -384,15 +398,15 @@ class MarkdownViewer:
                 font-size: {base_font_size}px;
                 line-height: 1.6;
                 color: #333;
-                max-width: 900px;
-                margin: 20px auto;
-                padding: 20px;
+                width: {container_width}px;  /* 使用固定宽度而不是 max-width，强制出现滚动条 */
+                margin: {margin}px auto;
+                padding: {padding}px;
                 background-color: #fff;
             }}
             h1, h2, h3, h4, h5, h6 {{
                 color: #2c3e50;
-                margin-top: 24px;
-                margin-bottom: 16px;
+                margin-top: {h_margin_top}px;
+                margin-bottom: {h_margin_bottom}px;
                 font-weight: 600;
                 line-height: 1.25;
             }}
@@ -419,7 +433,7 @@ class MarkdownViewer:
             }}
             pre {{
                 background-color: #282c34;
-                padding: 16px;
+                padding: {pre_padding}px;
                 overflow: auto;
                 font-size: 85%;
                 line-height: 1.45;
@@ -440,7 +454,7 @@ class MarkdownViewer:
             table {{
                 border-collapse: collapse;
                 width: 100%;
-                margin: 16px 0;
+                margin: {h_margin_bottom}px 0;
             }}
             table th, table td {{
                 padding: 6px 13px;
@@ -462,7 +476,7 @@ class MarkdownViewer:
                 text-decoration: underline;
             }}
             img {{
-                max-width: {image_max_width}%;
+                max-width: 100%;
                 height: auto;
             }}
             ul, ol {{
@@ -474,7 +488,7 @@ class MarkdownViewer:
             hr {{
                 height: 0.25em;
                 padding: 0;
-                margin: 24px 0;
+                margin: {h_margin_top}px 0;
                 background-color: #e1e4e8;
                 border: 0;
             }}
@@ -505,14 +519,25 @@ class MarkdownViewer:
         """应用缩放"""
         tab_data = self.get_current_tab_data()
         if tab_data and 'raw_html' in tab_data:
-            # 尝试保存当前滚动位置
-            scroll_pos = 0.0
+            # 保存当前滚动位置（横向和纵向）
+            scroll_y = 0.0
+            scroll_x = 0.0
+            scroll_x_center = False  # 标记是否需要横向居中
+            
             try:
-                # 关键修复：访问底层的 html 组件 (.html) 来获取滚动位置
-                # HtmlFrame 只是一个包装器，它的 yview() 可能不返回正确值
+                # 访问底层的 html 组件来获取滚动位置
                 if hasattr(tab_data['html_view'], 'html'):
-                    # yview() 返回 (start, end) 元组
-                    scroll_pos = tab_data['html_view'].html.yview()[0]
+                    # yview() 和 xview() 返回 (start, end) 元组
+                    scroll_y = tab_data['html_view'].html.yview()[0]
+                    x_view = tab_data['html_view'].html.xview()
+                    scroll_x = x_view[0]
+                    
+                    # 如果当前横向可见范围是100%（没有横向滚动条），则需要在缩放后居中
+                    if x_view[1] - x_view[0] >= 0.99:  # 允许一点误差
+                        scroll_x_center = True
+                        print(f"[DEBUG] Document is not scrollable horizontally, will center after zoom")
+                    
+                    print(f"[DEBUG] Saved scroll position: y={scroll_y:.4f}, x={scroll_x:.4f} (center={scroll_x_center})")
             except Exception as e:
                 print(f"[DEBUG] Cannot get scroll position: {e}")
             
@@ -520,17 +545,43 @@ class MarkdownViewer:
             styled_html = self.wrap_html(tab_data['raw_html'], tab_data['zoom_level'], base_path=base_dir)
             tab_data['html_view'].set_html(styled_html)
             
-            # 恢复滚动位置
-            if scroll_pos > 0:
-                def restore_scroll():
-                    try:
-                        if hasattr(tab_data['html_view'], 'html'):
-                            tab_data['html_view'].html.yview_moveto(scroll_pos)
-                    except Exception:
-                        pass
-                
-                # 给一点时间让HTML渲染完成
-                self.root.after(50, restore_scroll)
+            # 定义恢复滚动位置的函数
+            def restore_scroll(attempt_num=0):
+                try:
+                    if hasattr(tab_data['html_view'], 'html'):
+                        # 恢复纵向位置
+                        tab_data['html_view'].html.yview_moveto(scroll_y)
+                        
+                        # 处理横向位置
+                        if scroll_x_center:
+                            # 如果之前文档没有横向滚动条，现在需要居中
+                            try:
+                                x_view = tab_data['html_view'].html.xview()
+                                # 计算居中位置：(1 - 可见范围) / 2
+                                visible_range = x_view[1] - x_view[0]
+                                if visible_range < 1.0:
+                                    center_pos = (1.0 - visible_range) / 2.0
+                                    tab_data['html_view'].html.xview_moveto(center_pos)
+                                    print(f"[DEBUG] Attempt {attempt_num}: Centered horizontally at {center_pos:.4f}")
+                                else:
+                                    tab_data['html_view'].html.xview_moveto(0)
+                                    print(f"[DEBUG] Attempt {attempt_num}: No horizontal scroll needed")
+                            except Exception:
+                                tab_data['html_view'].html.xview_moveto(scroll_x)
+                        else:
+                            # 恢复原来的横向位置
+                            tab_data['html_view'].html.xview_moveto(scroll_x)
+                            print(f"[DEBUG] Attempt {attempt_num}: Restored scroll to y={scroll_y:.4f}, x={scroll_x:.4f}")
+                except Exception as e:
+                    print(f"[DEBUG] Attempt {attempt_num}: Cannot restore scroll position: {e}")
+            
+            # 多次尝试恢复滚动位置，应对HTML渲染的不同阶段
+            # 立即尝试一次
+            self.root.after(1, lambda: restore_scroll(1))
+            # 50ms后再尝试
+            self.root.after(50, lambda: restore_scroll(2))
+            # 150ms后最后尝试
+            self.root.after(150, lambda: restore_scroll(3))
 
     def on_global_mousewheel_zoom(self, event):
         """处理全局 Ctrl+滚轮缩放"""  
@@ -547,9 +598,13 @@ class MarkdownViewer:
             self.update_zoom()
 
     def on_mousewheel_zoom(self, event, tab_frame):
-        """处理Ctrl+滚轮缩放"""
+        """处理Ctrl+滚轮缩放（带防抖动）"""
         tab_data = tab_frame.tab_data
         if tab_data:
+            # 取消之前的缩放定时器（防抖动）
+            if tab_data.get('zoom_timer'):
+                self.root.after_cancel(tab_data['zoom_timer'])
+            
             # Windows下，event.delta正数表示向上滚动（放大），负数表示向下滚动（缩小）
             # delta通常是120的倍数
             if event.delta > 0:
@@ -559,11 +614,13 @@ class MarkdownViewer:
                 # 缩小
                 tab_data['zoom_level'] = max(tab_data['zoom_level'] - 0.1, 0.2)
             
-            # 应用缩放
-            if 'raw_html' in tab_data:
-                base_dir = os.path.dirname(tab_data['current_file']) if tab_data['current_file'] else None
-                styled_html = self.wrap_html(tab_data['raw_html'], tab_data['zoom_level'], base_path=base_dir, scroll_percent=None)
-                tab_data['html_view'].set_html(styled_html)
+            # 设置一个短延迟，避免快速滚动时多次触发
+            # 只有在用户停止滚动100ms后才真正应用缩放
+            def apply_zoom():
+                tab_data['zoom_timer'] = None
+                self.update_zoom()
+            
+            tab_data['zoom_timer'] = self.root.after(100, apply_zoom)
 
     def zoom_in(self):
         """放大"""

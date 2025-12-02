@@ -1,0 +1,4 @@
+# Qt版本Markdown查看器依赖
+PyQt6>=6.6.0
+PyQt6-WebEngine>=6.6.0
+markdown>=3.5.0
