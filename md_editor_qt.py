@@ -14,16 +14,29 @@ import urllib.parse
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
     QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
-    QTreeWidget, QTreeWidgetItem, QHeaderView
+    QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtCore import QUrl, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction, QKeySequence, QSyntaxHighlighter, QTextCharFormat,
-    QColor, QFont, QTextCursor, QTextBlock
+    QColor, QFont, QTextCursor, QTextBlock, QIcon, QPixmap
 )
 import markdown
+
+
+def resource_path(relative_path):
+    """获取资源文件的绝对路径（支持PyInstaller打包）"""
+    try:
+        # PyInstaller创建临时文件夹，并将路径存储在_MEIPASS中
+        base_path = sys._MEIPASS
+    except Exception:
+        # 如果不是打包后的exe，使用脚本所在目录
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    
+    return os.path.join(base_path, relative_path)
+
 
 
 class MarkdownHighlighter(QSyntaxHighlighter):
@@ -664,10 +677,66 @@ class MarkdownEditor(QMainWindow):
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
         
         self.setCentralWidget(self.tab_widget)
+        
+        # 创建背景标签（用于无标签页时显示）
+        # 注意：将其作为tab_widget的子控件，这样它只会显示在内容区域
+        self.background_label = QLabel(self.tab_widget)
+        self.background_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.background_label.setScaledContents(False)  # 不拉伸内容
+        
+        # 尝试加载背景图片
+        bg_path = resource_path("cat_background_1764666718697.png")
+        if os.path.exists(bg_path):
+            pixmap = QPixmap(bg_path)
+            # 保持宽高比缩放图片
+            self.background_pixmap = pixmap
+            self.background_label.setPixmap(pixmap.scaled(
+                800, 600, 
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            ))
+        else:
+            self.background_pixmap = None
+            self.background_label.setText("没有打开的文件\n拖拽文件到此处打开")
+            self.background_label.setStyleSheet("QLabel { color: #bdc3c7; font-size: 24px; font-weight: bold; }")
+        
+        self.background_label.hide()  # 默认隐藏
+    
+    def resizeEvent(self, event):
+        """窗口大小改变事件"""
+        super().resizeEvent(event)
+        if hasattr(self, 'tab_widget') and hasattr(self, 'background_label'):
+            # 调整背景标签大小为tab_widget的内容区域
+            self.background_label.setGeometry(self.tab_widget.rect())
+            
+            # 如果有背景图片，重新缩放以适应窗口大小
+            if hasattr(self, 'background_pixmap') and self.background_pixmap:
+                size = self.tab_widget.size()
+                scaled_pixmap = self.background_pixmap.scaled(
+                    size.width(), size.height(),
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation
+                )
+                self.background_label.setPixmap(scaled_pixmap)
+            
+            self.update_background_visibility()
+            
+    def update_background_visibility(self):
+        """更新背景可见性"""
+        if self.tab_widget.count() == 0:
+            self.background_label.show()
+            self.background_label.raise_()  # 确保在最上层（因为没有标签页时）
+        else:
+            self.background_label.hide()
     
     def new_tab(self):
         """创建新标签页"""
         tab = EditorTab(self)
+        index = self.tab_widget.addTab(tab, "新文档 *")
+        self.tab_widget.setCurrentIndex(index)
+        tab.editor.setFocus()
+        self.update_background_visibility()
+        return tab
         
         # 设置欢迎内容
         welcome_text = """# 欢迎使用Markdown编辑器
@@ -803,6 +872,7 @@ class MarkdownEditor(QMainWindow):
         
         # 允许关闭所有标签页
         self.tab_widget.removeTab(index)
+        self.update_background_visibility()
     
     def close_current_tab(self):
         """关闭当前标签页"""
@@ -1069,6 +1139,11 @@ class MarkdownEditor(QMainWindow):
 def main():
     """主函数"""
     app = QApplication(sys.argv)
+    
+    # 设置应用程序图标
+    icon_path = resource_path("Gemini_Generated_Image_t2ldymt2ldymt2ld.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
     
     editor = MarkdownEditor()
     editor.show()
