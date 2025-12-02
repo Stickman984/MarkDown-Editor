@@ -13,21 +13,22 @@ import webbrowser
 import urllib.parse
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
-    QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout
+    QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
+    QTreeWidget, QTreeWidgetItem, QHeaderView
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtCore import QUrl, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction, QKeySequence, QSyntaxHighlighter, QTextCharFormat,
-    QColor, QFont
+    QColor, QFont, QTextCursor, QTextBlock
 )
 import markdown
 
 
 class MarkdownHighlighter(QSyntaxHighlighter):
     """Markdown语法高亮器"""
-    
+    # ... (保持不变) ...
     def __init__(self, parent=None):
         super().__init__(parent)
         
@@ -122,8 +123,7 @@ class MarkdownHighlighter(QSyntaxHighlighter):
 
 
 class MarkdownWebView(QWebEngineView):
-    """自定义WebView用于预览"""
-    
+    # ... (保持不变) ...
     def __init__(self, editor_tab, parent=None):
         super().__init__(parent)
         self.editor_tab = editor_tab
@@ -146,8 +146,7 @@ class MarkdownWebView(QWebEngineView):
 
 
 class MarkdownWebPage(QWebEnginePage):
-    """自定义WebEnginePage，用于拦截链接导航"""
-    
+    # ... (保持不变) ...
     def __init__(self, web_view):
         super().__init__(web_view)
         self.web_view = web_view
@@ -197,12 +196,20 @@ class EditorTab(QWidget):
         # 创建预览
         self.preview = MarkdownWebView(self)
         
+        # 创建目录树
+        self.toc_tree = QTreeWidget()
+        self.toc_tree.setHeaderLabel("目录")
+        self.toc_tree.header().setVisible(True)
+        self.toc_tree.itemClicked.connect(self.on_toc_item_clicked)
+        self.toc_tree.setVisible(False) # 默认隐藏
+        
         # 添加到分割器
         self.splitter.addWidget(self.editor)
         self.splitter.addWidget(self.preview)
+        self.splitter.addWidget(self.toc_tree)
         
-        # 设置初始比例 (50:50)
-        self.splitter.setSizes([600, 600])
+        # 设置初始比例 (45:45:10)
+        self.splitter.setSizes([500, 500, 200])
         
         # 添加到布局
         layout.addWidget(self.splitter)
@@ -323,8 +330,56 @@ class EditorTab(QWidget):
         self.preview_timer.stop()
         self.preview_timer.start(300)
     
+    def update_toc(self):
+        """更新目录"""
+        self.toc_tree.clear()
+        text = self.editor.toPlainText()
+        lines = text.split('\n')
+        
+        # 栈用于跟踪父节点：[(level, item)]
+        stack = [] 
+        
+        for i, line in enumerate(lines):
+            # 匹配标题行 (# H1, ## H2 等)
+            match = re.match(r'^(#{1,6})\s+(.*)', line)
+            if match:
+                level = len(match.group(1))
+                title = match.group(2).strip()
+                
+                item = QTreeWidgetItem([title])
+                item.setData(0, Qt.ItemDataRole.UserRole, i) # 存储行号
+                
+                # 找到正确的父节点
+                while stack and stack[-1][0] >= level:
+                    stack.pop()
+                
+                if stack:
+                    parent_item = stack[-1][1]
+                    parent_item.addChild(item)
+                else:
+                    self.toc_tree.addTopLevelItem(item)
+                
+                stack.append((level, item))
+        
+        self.toc_tree.expandAll()
+
+    def on_toc_item_clicked(self, item, column):
+        """点击目录项跳转"""
+        line_number = item.data(0, Qt.ItemDataRole.UserRole)
+        if line_number is not None:
+            # 移动光标到对应行
+            cursor = self.editor.textCursor()
+            block = self.editor.document().findBlockByLineNumber(line_number)
+            cursor.setPosition(block.position())
+            self.editor.setTextCursor(cursor)
+            self.editor.centerCursor() # 滚动到可见区域
+            self.editor.setFocus()
+
     def update_preview(self):
         """更新预览"""
+        # 更新目录
+        self.update_toc()
+
         # 保存当前滚动位置（百分比）
         current_scroll_ratio = 0.0
         scrollbar = self.editor.verticalScrollBar()
@@ -409,6 +464,7 @@ class EditorTab(QWidget):
             self.is_modified = False
             self.main_window.update_tab_title(self)
             self.main_window.statusbar.showMessage(f"已打开: {filename}")
+            self.update_toc() # 加载文件后更新目录
         except Exception as e:
             QMessageBox.critical(self.main_window, "错误", f"无法打开文件:\n{str(e)}")
     
@@ -523,6 +579,12 @@ class MarkdownEditor(QMainWindow):
         self.toggle_preview_action = QAction("隐藏预览", self)
         self.toggle_preview_action.triggered.connect(self.toggle_preview)
         view_menu.addAction(self.toggle_preview_action)
+        
+        view_menu.addSeparator()
+        
+        self.toggle_toc_action = QAction("显示目录", self)
+        self.toggle_toc_action.triggered.connect(self.toggle_toc)
+        view_menu.addAction(self.toggle_toc_action)
     
     def create_toolbar(self):
         """创建工具栏"""
@@ -559,6 +621,11 @@ class MarkdownEditor(QMainWindow):
         toggle_preview_action = QAction("👁 预览", self)
         toggle_preview_action.triggered.connect(self.toggle_preview)
         toolbar.addAction(toggle_preview_action)
+        
+        self.toggle_toc_toolbar_action = QAction("📑 目录", self)
+        self.toggle_toc_toolbar_action.triggered.connect(self.toggle_toc)
+        toolbar.addAction(self.toggle_toc_toolbar_action)
+
     
     def create_statusbar(self):
         """创建状态栏"""
@@ -740,6 +807,19 @@ class MarkdownEditor(QMainWindow):
             else:
                 tab.preview.show()
                 self.toggle_preview_action.setText("隐藏预览")
+    
+    def toggle_toc(self):
+        """切换目录显示/隐藏"""
+        tab = self.get_current_tab()
+        if tab:
+            if tab.toc_tree.isVisible():
+                tab.toc_tree.hide()
+                self.toggle_toc_action.setText("显示目录")
+                self.toggle_toc_toolbar_action.setText("📑 目录")
+            else:
+                tab.toc_tree.show()
+                self.toggle_toc_action.setText("隐藏目录")
+                self.toggle_toc_toolbar_action.setText("📑 隐藏目录")
     
     def handle_link_click(self, url):
         """处理链接点击事件"""
