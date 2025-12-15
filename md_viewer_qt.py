@@ -88,9 +88,19 @@ class MarkdownViewerQt(QMainWindow):
         self.notepadpp_path = r"C:\Program Files\Notepad++\notepad++.exe"
         
         # Markdown转换器
+        # nl2br: 将单个换行符转换为<br>，支持列表中的换行显示
+        # sane_lists: 更合理的列表解析
         self.md = markdown.Markdown(extensions=[
-            'extra', 'codehilite', 'toc', 'fenced_code', 'tables', 'nl2br'
+            'extra',           # 包含多个扩展：abbr, attr_list, def_list, fenced_code, footnotes, tables
+            'codehilite',      # 代码高亮
+            'toc',             # 目录
+            'fenced_code',     # 围栏代码块（已包含在extra中，但明确声明）
+            'tables',          # 表格（已包含在extra中，但明确声明）
+            'sane_lists',      # 更合理的列表解析
+            'nl2br',           # 换行符转<br>（支持列表中的换行）
         ])
+
+
         
         # 创建UI
         self.create_menu()
@@ -434,6 +444,8 @@ class MarkdownViewerQt(QMainWindow):
                 line-height: 1.45;
                 border-radius: 6px;
                 border: 1px solid #3e4451;
+                white-space: pre-wrap;
+                word-wrap: break-word;
             }}
             pre code {{
                 background-color: transparent;
@@ -479,6 +491,14 @@ class MarkdownViewerQt(QMainWindow):
             }}
             li {{
                 margin: 0.25em 0;
+            }}
+            li > p {{
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }}
+            li > pre {{
+                white-space: pre-wrap;
+                word-wrap: break-word;
             }}
             hr {{
                 height: 0.25em;

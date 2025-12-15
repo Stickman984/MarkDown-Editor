@@ -466,7 +466,7 @@ class EditorTab(QWidget):
             except:
                 pass
     
-    def load_file(self, filename):
+    def load_file(self, filename, anchor=None):
         """加载文件到此标签页"""
         try:
             with open(filename, 'r', encoding='utf-8') as f:
@@ -478,8 +478,48 @@ class EditorTab(QWidget):
             self.main_window.update_tab_title(self)
             self.main_window.statusbar.showMessage(f"已打开: {filename}")
             self.update_toc() # 加载文件后更新目录
+            
+            if anchor:
+                # 使用定时器确保内容加载完成后再滚动
+                QTimer.singleShot(100, lambda: self.scroll_to_anchor(anchor))
+                
         except Exception as e:
             QMessageBox.critical(self.main_window, "错误", f"无法打开文件:\n{str(e)}")
+            
+    def scroll_to_anchor(self, anchor):
+        """滚动到指定锚点"""
+        if not anchor:
+            return
+            
+        # 简单匹配：寻找包含锚点文本的标题行
+        # 锚点通常是URL编码的，这里已经解码
+        # 实际标题可能包含空格、大小写差异
+        
+        target_text = anchor.lower().replace('-', ' ').replace('_', ' ')
+        
+        text = self.editor.toPlainText()
+        lines = text.split('\n')
+        
+        for i, line in enumerate(lines):
+            line = line.strip()
+            if line.startswith('#'):
+                # 提取标题文本
+                header_text = line.lstrip('#').strip().lower()
+                
+                # 尝试匹配
+                # 1. 直接包含
+                # 2. 移除空格后包含
+                if target_text in header_text or \
+                   target_text.replace(' ', '') in header_text.replace(' ', ''):
+                    
+                    # 找到匹配行，滚动到该行
+                    cursor = self.editor.textCursor()
+                    block = self.editor.document().findBlockByLineNumber(i)
+                    cursor.setPosition(block.position())
+                    self.editor.setTextCursor(cursor)
+                    self.editor.centerCursor()
+                    self.editor.setFocus()
+                    return
     
     def save_file(self):
         """保存文件"""
@@ -524,9 +564,19 @@ class MarkdownEditor(QMainWindow):
         self.notepadpp_path = r"C:\Program Files\Notepad++\notepad++.exe"
         
         # Markdown转换器
+        # nl2br: 将单个换行符转换为<br>，支持列表中的换行显示
+        # sane_lists: 更合理的列表解析
         self.md = markdown.Markdown(extensions=[
-            'extra', 'codehilite', 'toc', 'fenced_code', 'tables', 'nl2br'
+            'extra',           # 包含多个扩展：abbr, attr_list, def_list, fenced_code, footnotes, tables
+            'codehilite',      # 代码高亮
+            'toc',             # 目录
+            'fenced_code',     # 围栏代码块（已包含在extra中，但明确声明）
+            'tables',          # 表格（已包含在extra中，但明确声明）
+            'sane_lists',      # 更合理的列表解析
+            'nl2br',           # 换行符转<br>（支持列表中的换行）
         ])
+
+
         
         # 创建UI
         self.create_menu()
@@ -832,14 +882,14 @@ class MarkdownEditor(QMainWindow):
             # 总是在新标签页打开
             self.open_file_in_tab(filename, in_new_tab=True)
     
-    def open_file_in_tab(self, filename, in_new_tab=False):
+    def open_file_in_tab(self, filename, in_new_tab=False, anchor=None):
         """在标签页中打开文件"""
         if in_new_tab:
             self.new_tab()
         
         tab = self.get_current_tab()
         if tab:
-            tab.load_file(filename)
+            tab.load_file(filename, anchor)
     
     def save_file(self):
         """保存文件"""
@@ -917,6 +967,12 @@ class MarkdownEditor(QMainWindow):
     def handle_link_click(self, url):
         """处理链接点击事件"""
         try:
+            # 分离锚点
+            anchor = None
+            if '#' in url:
+                url, anchor = url.rsplit('#', 1)
+                anchor = urllib.parse.unquote(anchor)
+            
             # 解码URL
             decoded_url = urllib.parse.unquote(url)
             
@@ -952,7 +1008,7 @@ class MarkdownEditor(QMainWindow):
                     
                     if ext in ['.md', '.markdown', '.mdown']:
                         # Markdown文件 - 在新标签页打开
-                        self.open_file_in_tab(decoded_url, in_new_tab=True)
+                        self.open_file_in_tab(decoded_url, in_new_tab=True, anchor=anchor)
                     elif ext in ['.txt', '.log', '.json', '.xml', '.yaml', '.yml', 
                                 '.py', '.js', '.java', '.c', '.cpp', '.h', '.cs',
                                 '.html', '.css', '.php', '.rb', '.go', '.rs', '.sh',
@@ -1037,6 +1093,8 @@ class MarkdownEditor(QMainWindow):
                 line-height: 1.45;
                 border-radius: 6px;
                 border: 1px solid #3e4451;
+                white-space: pre-wrap;
+                word-wrap: break-word;
             }}
             pre code {{
                 background-color: transparent;
@@ -1081,6 +1139,14 @@ class MarkdownEditor(QMainWindow):
             }}
             li {{
                 margin: 0.25em 0;
+            }}
+            li > p {{
+                white-space: pre-wrap;
+                word-wrap: break-word;
+            }}
+            li > pre {{
+                white-space: pre-wrap;
+                word-wrap: break-word;
             }}
             hr {{
                 height: 0.25em;
