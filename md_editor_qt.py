@@ -402,6 +402,9 @@ class EditorTab(QWidget):
         # 获取编辑器内容
         text = self.editor.toPlainText()
         
+        # 预处理：修复特殊格式显示问题
+        text = self.main_window.preprocess_markdown(text)
+        
         # 转换为HTML
         self.main_window.md.reset()
         html_content = self.main_window.md.convert(text)
@@ -1032,6 +1035,129 @@ class MarkdownEditor(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"无法打开链接:\n{str(e)}")
     
+    def preprocess_markdown(self, text):
+        """
+        预处理Markdown文本
+        
+        解决问题：
+        用户输入的 `[key]: [value]` 格式（常见于某些日志或配置）会被Markdown解析器
+        误认为是"参考链接定义"(Reference Link Definition)而隐藏不显示。
+        
+        改进逻辑：
+        1. 逐行处理
+        2. 检测是否在代码块中（``` 或 4空格缩进）
+        3. 只有在这个模式出现在普通文本中时才进行转义
+        """
+        lines = text.split('\n')
+        processed_lines = []
+        
+        in_code_block = False
+        
+        # 匹配模式：[key]: [value]
+        # 改进：不仅匹配行首，还匹配块引用(>)和列表项(-/+/*)前缀
+        # 这样可以修复块引用中或列表中的内容显示问题
+        # Group 1: Indent/Quotes (e.g. "  > > ")
+        # Group 2: Bullet (optional)
+        # Group 3: Space after bullet (optional)
+        # Group 4: Key
+        # Group 5: Space
+        # Group 6: Value
+        pattern = re.compile(r'^([\s>]*)(?:([-*+])(\s+))?\[([^\]\n]+)\]:(\s*)\[([^\]\n]+)\]')
+        
+        def replace_func(m):
+            prefix = m.group(1)
+            bullet = m.group(2) or ''
+            bullet_space = m.group(3) or ''
+            key = m.group(4)
+            mid_space = m.group(5)
+            val = m.group(6)
+            # 转义第一个 [ 为 \[
+            return f"{prefix}{bullet}{bullet_space}\[{key}]:{mid_space}[{val}]"
+        
+        # 匹配引用块中的围栏代码块起始/结束
+        # Group 1: Prefix (e.g. "> ")
+        # Group 2: Fence (e.g. "```")
+        bq_fence_pattern = re.compile(r'^(\s*(?:>\s*)+)(```|~~~)\s*$')
+        in_bq_fence_block = False
+        bq_prefix = ""
+        
+        for line in lines:
+            # 1. 处理引用块中的围栏代码块
+            # python-markdown不支持在引用块中使用围栏代码块（即使是fenced_code插件）
+            # 必须将其转换为缩进代码块（即在引用标记后加4个空格）才能正确渲染为代码块
+            
+            if in_bq_fence_block:
+                # 检查是否中断引用（即不再以相同前缀开头）
+                if not line.startswith(bq_prefix):
+                    in_bq_fence_block = False
+                    # 继续后续处理（RegEx escape等）
+                
+                # 检查结束围栏
+                elif line.strip() == (bq_prefix + "```").strip() or line.strip() == (bq_prefix + "~~~").strip():
+                    # 结束围栏，丢弃该行
+                    in_bq_fence_block = False
+                    continue
+                else:
+                    # 内容行：转换为缩进代码块
+                    # 保持引用前缀，但在内容前添加4个空格
+                    content = line[len(bq_prefix):]
+                    # 如果content本身有缩进，保留它
+                    new_line = bq_prefix + "    " + content
+                    processed_lines.append(new_line)
+                    continue
+            
+            # 检查开始围栏
+            bq_match = bq_fence_pattern.match(line)
+            if bq_match:
+                in_bq_fence_block = True
+                bq_prefix = bq_match.group(1)
+                # 丢弃开始围栏行
+                continue
+
+            # 2. 检测并修复根级围栏代码块标记
+            stripped = line.lstrip()
+            indent_len = len(line) - len(stripped)
+            
+            # 自动修复：如果围栏代码块有少量缩进（1-3空格），这是无效Markdown，
+            # python-markdown会将其作为文本处理，导致Reference Link丢失或需要丑陋的转义。
+            # 我们将其强制"去缩进"，转变为合法的顶层代码块。
+            if (stripped.startswith('```') or stripped.startswith('~~~')) and indent_len < 4 and not line.strip().startswith('>'):
+                line = stripped # 去除缩进
+                # 重新计算缩进（现在是0）
+                indent_len = 0
+            
+            # 3. 检测代码块状态 (用于Regex保护)
+            # 只有顶格的（无缩进）围栏才被视为代码块
+            if line.startswith('```') or line.startswith('~~~'):
+                in_code_block = not in_code_block
+                processed_lines.append(line)
+                continue
+                
+            # 如果在代码块内，直接保留
+            if in_code_block:
+                processed_lines.append(line)
+                continue
+            
+            # 4. 检测缩进代码块（4个空格或1个Tab）
+            indent_match = re.match(r'^(\s*)', line)
+            current_indent_len = 0
+            if indent_match:
+                indent_str = indent_match.group(1)
+                current_indent_len = len(indent_str.replace('\t', '    '))
+            
+            if current_indent_len >= 4:
+                # 认为是缩进代码块，不处理
+                processed_lines.append(line)
+                continue
+            
+            # 5. 在普通文本中匹配特定模式并转义
+            if pattern.match(line):
+                line = pattern.sub(replace_func, line)
+                
+            processed_lines.append(line)
+            
+        return '\n'.join(processed_lines)
+
     def wrap_html(self, content, zoom_level=1.0, base_path=None):
         """包装HTML内容并添加样式"""
         
@@ -1077,8 +1203,8 @@ class MarkdownEditor(QMainWindow):
             h3 {{ font-size: 1.25em; }}
             h4 {{ font-size: 1em; }}
             code {{
-                background-color: #282c34;
-                color: #abb2bf;
+                background-color: #f6f8fa;
+                color: #24292e;
                 padding: 0.2em 0.4em;
                 margin: 0;
                 font-size: 85%;
@@ -1086,19 +1212,19 @@ class MarkdownEditor(QMainWindow):
                 font-family: 'Consolas', 'Courier New', 'Cascadia Code', monospace;
             }}
             pre {{
-                background-color: #282c34;
+                background-color: #f6f8fa;
                 padding: 16px;
                 overflow: auto;
                 font-size: 85%;
                 line-height: 1.45;
                 border-radius: 6px;
-                border: 1px solid #3e4451;
+                border: 1px solid #d1d5da;
                 white-space: pre-wrap;
                 word-wrap: break-word;
             }}
             pre code {{
                 background-color: transparent;
-                color: #abb2bf;
+                color: #24292e;
                 padding: 0;
             }}
             blockquote {{

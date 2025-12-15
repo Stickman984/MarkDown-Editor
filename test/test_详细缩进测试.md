@@ -61,7 +61,7 @@
 
 > 引用中的代码块：
 > ```
-> [ro.lmk.swap_free_low_percentage]: [15]
+> `[ro.lmk.swap_free_low_percentage]: [15]`
 > ```
 
 ---
