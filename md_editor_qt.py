@@ -11,6 +11,8 @@ import re
 import subprocess
 import webbrowser
 import urllib.parse
+import shutil
+import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
     QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
@@ -21,7 +23,7 @@ from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtCore import QUrl, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction, QKeySequence, QSyntaxHighlighter, QTextCharFormat,
-    QColor, QFont, QTextCursor, QTextBlock, QIcon, QPixmap
+    QColor, QFont, QTextCursor, QTextBlock, QIcon, QPixmap, QImage
 )
 import markdown
 
@@ -176,6 +178,122 @@ class MarkdownWebPage(QWebEnginePage):
         return True
 
 
+
+class MarkdownTextEdit(QPlainTextEdit):
+    """支持图片和文件粘贴的文本编辑器"""
+    
+    def __init__(self, editor_tab, parent=None):
+        super().__init__(parent)
+        self.editor_tab = editor_tab
+        
+    def canInsertFromMimeData(self, source):
+        if source.hasImage() or source.hasUrls():
+            return True
+        return super().canInsertFromMimeData(source)
+        
+    def insertFromMimeData(self, source):
+        # 确定基准目录
+        if self.editor_tab.current_file:
+            base_dir = os.path.dirname(self.editor_tab.current_file)
+        else:
+            # 如果是新文件，未保存，暂时使用当前工作目录
+            base_dir = os.getcwd()
+            
+        # 1. 处理图片
+        if source.hasImage():
+            image = source.imageData()
+            if image:
+                # 创建图片目录
+                pic_dir = os.path.join(base_dir, "pic")
+                if not os.path.exists(pic_dir):
+                    os.makedirs(pic_dir)
+                    
+                # 生成文件名
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"image_{timestamp}.png"
+                full_path = os.path.join(pic_dir, filename)
+                
+                # 保存图片
+                # 注意：imageData()返回的是QVariant，PyQt6通常会自动解包为QImage/QPixmap
+                # 如果是QPixmap需要转为QImage，但QMimeData通常存储QImage
+                if hasattr(image, 'save'):
+                    image.save(full_path, "PNG")
+                else:
+                    # 尝试转换
+                    from PyQt6.QtGui import QImage
+                    if isinstance(image, QImage):
+                        image.save(full_path, "PNG")
+                
+                # 插入Markdown
+                cursor = self.textCursor()
+                cursor.insertText(f"![](./pic/{filename})")
+                return
+                
+        # 2. 处理文件
+        if source.hasUrls():
+            has_handled_urls = False
+            for url in source.urls():
+                if url.isLocalFile():
+                    src_path = url.toLocalFile()
+                    if os.path.exists(src_path):
+                        # 判断是否为图片文件（通过扩展名）
+                        ext = os.path.splitext(src_path)[1].lower()
+                        is_image_file = ext in ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp']
+                        
+                        if is_image_file:
+                            # 即使是文件复制，如果是图片，也放入 pic 目录
+                            target_dir = os.path.join(base_dir, "pic")
+                            if not os.path.exists(target_dir):
+                                os.makedirs(target_dir)
+                                
+                            filename = os.path.basename(src_path)
+                            # 处理文件名冲突
+                            target_path = os.path.join(target_dir, filename)
+                            if os.path.exists(target_path):
+                                name, ext = os.path.splitext(filename)
+                                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                filename = f"{name}_{timestamp}{ext}"
+                                target_path = os.path.join(target_dir, filename)
+                                
+                            shutil.copy2(src_path, target_path)
+                            
+                            cursor = self.textCursor()
+                            cursor.insertText(f"![](./pic/{filename})")
+                            has_handled_urls = True
+                            
+                        else:
+                            # 其他文件放入 files 目录
+                            target_dir = os.path.join(base_dir, "files")
+                            if not os.path.exists(target_dir):
+                                os.makedirs(target_dir)
+                                
+                            filename = os.path.basename(src_path)
+                            # 处理文件名冲突
+                            target_path = os.path.join(target_dir, filename)
+                            if os.path.exists(target_path):
+                                name, ext = os.path.splitext(filename)
+                                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                                filename = f"{name}_{timestamp}{ext}"
+                                target_path = os.path.join(target_dir, filename)
+                                
+                            try:
+                                if os.path.isdir(src_path):
+                                    shutil.copytree(src_path, target_path)
+                                else:
+                                    shutil.copy2(src_path, target_path)
+                                    
+                                cursor = self.textCursor()
+                                cursor.insertText(f"[{filename}](./files/{filename})")
+                                has_handled_urls = True
+                            except Exception as e:
+                                print(f"Copy failed: {e}")
+            
+            if has_handled_urls:
+                return
+
+        super().insertFromMimeData(source)
+
+
 class EditorTab(QWidget):
     """单个编辑器标签页，包含编辑器和预览"""
     
@@ -193,7 +311,7 @@ class EditorTab(QWidget):
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         
         # 创建编辑器
-        self.editor = QPlainTextEdit()
+        self.editor = MarkdownTextEdit(self)
         self.editor.setPlaceholderText("在此输入Markdown内容...")
         
         # 设置编辑器字体
