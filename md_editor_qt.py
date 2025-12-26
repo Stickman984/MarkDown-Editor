@@ -257,9 +257,34 @@ class EditorTab(QWidget):
         self.preview.installEventFilter(self)
     
     def eventFilter(self, obj, event):
-        """事件过滤器，处理Ctrl+滚轮缩放"""
+        """事件过滤器，处理Ctrl+滚轮缩放和Tab键"""
         from PyQt6.QtCore import QEvent
         from PyQt6.QtGui import QWheelEvent
+        
+        # 处理Tab键：智能补齐到4空格边界
+        if event.type() == QEvent.Type.KeyPress and obj == self.editor:
+            if event.key() == Qt.Key.Key_Tab:
+                cursor = self.editor.textCursor()
+                # 获取当前行光标位置（从行首开始算）
+                pos_in_line = cursor.positionInBlock()
+                # 计算需要补齐的空格数（到下一个4的倍数）
+                spaces_needed = 4 - (pos_in_line % 4)
+                cursor.insertText(" " * spaces_needed)
+                return True
+            elif event.key() == Qt.Key.Key_Backtab:  # Shift+Tab
+                cursor = self.editor.textCursor()
+                # 移动到行首
+                cursor.movePosition(cursor.MoveOperation.StartOfLine)
+                # 获取当前行文本
+                block_text = cursor.block().text()
+                # 计算行首有多少空格
+                leading_spaces = len(block_text) - len(block_text.lstrip(' '))
+                # 最多移除4个空格
+                spaces_to_remove = min(leading_spaces, 4)
+                if spaces_to_remove > 0:
+                    cursor.movePosition(cursor.MoveOperation.Right, cursor.MoveMode.KeepAnchor, spaces_to_remove)
+                    cursor.removeSelectedText()
+                return True
         
         if event.type() == QEvent.Type.Wheel and event.modifiers() == Qt.KeyboardModifier.ControlModifier:
             wheel_event = event
@@ -1149,6 +1174,13 @@ class MarkdownEditor(QMainWindow):
         in_bq_fence_block = False
         bq_prefix = ""
         
+        # 匹配列表项中的围栏代码块（4+空格缩进）
+        # Group 1: 缩进空格
+        # Group 2: 围栏标记
+        list_fence_pattern = re.compile(r'^(\s{4,})(```|~~~)\s*$')
+        in_list_fence_block = False
+        list_indent = ""
+        
         for line in lines:
             # 1. 处理引用块中的围栏代码块
             # python-markdown不支持在引用块中使用围栏代码块（即使是fenced_code插件）
@@ -1174,11 +1206,49 @@ class MarkdownEditor(QMainWindow):
                     processed_lines.append(new_line)
                     continue
             
-            # 检查开始围栏
+            # 检查开始围栏（引用块）
             bq_match = bq_fence_pattern.match(line)
             if bq_match:
                 in_bq_fence_block = True
                 bq_prefix = bq_match.group(1)
+                # 丢弃开始围栏行
+                continue
+            
+            # 1.5 处理列表项中的围栏代码块
+            # python-markdown对列表内的围栏代码块支持不佳，会渲染为inline code
+            # 将其转换为缩进代码块（在原有缩进基础上再加4个空格）
+            
+            if in_list_fence_block:
+                # 检查是否还在列表缩进内
+                if line.strip() == "" or line.startswith(list_indent):
+                    # 检查结束围栏
+                    stripped_line = line.strip()
+                    if stripped_line == "```" or stripped_line == "~~~":
+                        # 结束围栏，丢弃该行，并插入空行以正确分隔后续列表项
+                        in_list_fence_block = False
+                        processed_lines.append("")  # 插入空行
+                        continue
+                    else:
+                        # 内容行：转换为缩进代码块
+                        # 保持原有缩进，再添加4个空格
+                        if line.startswith(list_indent):
+                            content = line[len(list_indent):]
+                            new_line = list_indent + "    " + content
+                            processed_lines.append(new_line)
+                        else:
+                            processed_lines.append(line)
+                        continue
+                else:
+                    # 缩进中断，退出列表代码块模式
+                    in_list_fence_block = False
+            
+            # 检查开始围栏（列表项）
+            list_match = list_fence_pattern.match(line)
+            if list_match:
+                in_list_fence_block = True
+                list_indent = list_match.group(1)
+                # 插入一个缩进空行（python-markdown需要空行才能识别为代码块）
+                processed_lines.append(list_indent)
                 # 丢弃开始围栏行
                 continue
 
@@ -1282,13 +1352,14 @@ class MarkdownEditor(QMainWindow):
             pre {{
                 background-color: #f6f8fa;
                 padding: 16px;
-                overflow: auto;
+                overflow-x: auto;
+                overflow-y: hidden;
                 font-size: 100%;
                 line-height: 1.45;
                 border-radius: 6px;
                 border: 1px solid #d1d5da;
-                white-space: pre-wrap;
-                word-wrap: break-word;
+                white-space: pre;
+                margin: 8px 0;
             }}
             pre code {{
                 background-color: transparent;
@@ -1335,12 +1406,11 @@ class MarkdownEditor(QMainWindow):
                 margin: 0.25em 0;
             }}
             li > p {{
-                white-space: pre-wrap;
-                word-wrap: break-word;
+                margin: 0.25em 0;
             }}
             li > pre {{
-                white-space: pre-wrap;
-                word-wrap: break-word;
+                white-space: pre;
+                margin: 8px 0;
             }}
             hr {{
                 height: 0.25em;
