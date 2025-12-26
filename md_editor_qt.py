@@ -240,6 +240,10 @@ class EditorTab(QWidget):
         self.editor_zoom_level = 1.0
         self.base_font_size = 11
         
+        # 增量更新设置
+        self.preview_initialized = False  # 预览页面是否已初始化
+        self.last_base_url = None  # 上次的baseUrl，用于检测是否需要完全重新加载
+        
         # 监听编辑器滚动
         self.editor.verticalScrollBar().valueChanged.connect(self.on_editor_scroll)
         
@@ -393,7 +397,7 @@ class EditorTab(QWidget):
             self.editor.setFocus()
 
     def update_preview(self):
-        """更新预览"""
+        """更新预览（支持增量DOM更新以减少闪烁）"""
         # 更新目录
         self.update_toc()
         
@@ -422,13 +426,37 @@ class EditorTab(QWidget):
         
         # 获取baseUrl用于相对路径解析
         base_url = None
+        base_url_str = ""
         if self.current_file:
             base_dir = os.path.dirname(self.current_file)
             base_url = QUrl.fromLocalFile(base_dir + "/")
+            base_url_str = base_dir
         
-        # 包装样式
+        # 检查是否需要完全重新加载（首次加载或baseUrl变化）
+        need_full_reload = not self.preview_initialized or self.last_base_url != base_url_str
+        
+        if need_full_reload:
+            # 完全重新加载：使用setHtml
+            self._full_reload_preview(html_content, base_url, base_url_str, preview_scroll_ratio)
+        else:
+            # 增量更新：使用JavaScript更新内容
+            self._incremental_update_preview(html_content)
+        
+        # 恢复编辑器滚动位置和光标位置（确保编辑器不跳动）
+        self.editor.verticalScrollBar().setValue(editor_scroll_value)
+        cursor = self.editor.textCursor()
+        cursor.setPosition(cursor_position)
+        self.editor.setTextCursor(cursor)
+        
+        # 延迟解锁同步，等待预览加载完成
+        delay = 500 if need_full_reload else 50
+        QTimer.singleShot(delay, lambda: setattr(self, 'is_syncing', False))
+    
+    def _full_reload_preview(self, html_content, base_url, base_url_str, preview_scroll_ratio):
+        """完全重新加载预览页面"""
+        # 包装样式，但内容放在特定容器中
         styled_html = self.main_window.wrap_html(
-            html_content, 
+            f'<div id="md-content">{html_content}</div>',
             self.preview.zoom_level,
             base_path=os.path.dirname(self.current_file) if self.current_file else None
         )
@@ -477,17 +505,27 @@ class EditorTab(QWidget):
         else:
             self.preview.setHtml(styled_html)
         
-        # 恢复编辑器滚动位置和光标位置（确保编辑器不跳动）
-        self.editor.verticalScrollBar().setValue(editor_scroll_value)
-        cursor = self.editor.textCursor()
-        cursor.setPosition(cursor_position)
-        self.editor.setTextCursor(cursor)
-        
-        # 延迟解锁同步，等待预览加载完成
-        QTimer.singleShot(500, lambda: setattr(self, 'is_syncing', False))
-        
-        # 注意：titleChanged 信号连接已移至 __init__ 方法，避免重复连接
+        # 标记为已初始化
+        self.preview_initialized = True
+        self.last_base_url = base_url_str
     
+    def _incremental_update_preview(self, html_content):
+        """增量更新预览内容（不重新加载整个页面）"""
+        import json
+        # 转义HTML内容用于JavaScript
+        escaped_content = json.dumps(html_content)
+        
+        # 使用JavaScript更新内容容器
+        js_code = f"""
+        (function() {{
+            var container = document.getElementById('md-content');
+            if (container) {{
+                container.innerHTML = {escaped_content};
+            }}
+        }})();
+        """
+        self.preview.page().runJavaScript(js_code)
+
     def on_preview_title_changed(self, title):
         """预览窗口标题改变时（用于接收滚动数据）"""
         if title.startswith('SCROLL:'):
@@ -507,6 +545,7 @@ class EditorTab(QWidget):
             self.editor.setPlainText(content)
             self.current_file = filename
             self.is_modified = False
+            self.preview_initialized = False  # 重置，确保新文件触发完全重新加载
             self.main_window.update_tab_title(self)
             self.main_window.statusbar.showMessage(f"已打开: {filename}")
             self.update_toc() # 加载文件后更新目录
