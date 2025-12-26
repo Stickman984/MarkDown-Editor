@@ -243,6 +243,10 @@ class EditorTab(QWidget):
         # 监听编辑器滚动
         self.editor.verticalScrollBar().valueChanged.connect(self.on_editor_scroll)
         
+        # 监听预览窗口标题变化（用于接收滚动数据）
+        # 注意：必须只连接一次，否则会导致重复触发滚动同步
+        self.preview.page().titleChanged.connect(self.on_preview_title_changed)
+        
         # 安装事件过滤器以捕获Ctrl+滚轮缩放
         self.editor.installEventFilter(self)
         self.editor.viewport().installEventFilter(self)  # 关键：也要监听viewport
@@ -392,12 +396,19 @@ class EditorTab(QWidget):
         """更新预览"""
         # 更新目录
         self.update_toc()
+        
+        # 锁定同步滚动，防止预览更新时干扰编辑器
+        self.is_syncing = True
+        
+        # 保存编辑器当前状态（绝对值，而非比例）
+        editor_scroll_value = self.editor.verticalScrollBar().value()
+        cursor_position = self.editor.textCursor().position()
 
-        # 保存当前滚动位置（百分比）
-        current_scroll_ratio = 0.0
+        # 计算预览滚动比例（用于恢复预览位置）
+        preview_scroll_ratio = 0.0
         scrollbar = self.editor.verticalScrollBar()
         if scrollbar.maximum() > 0:
-            current_scroll_ratio = scrollbar.value() / scrollbar.maximum()
+            preview_scroll_ratio = scrollbar.value() / scrollbar.maximum()
         
         # 获取编辑器内容
         text = self.editor.toPlainText()
@@ -426,7 +437,12 @@ class EditorTab(QWidget):
         scroll_script = f"""
         <script>
         let scrollTimeout;
+        let isInitialLoad = true;
+        
         window.addEventListener('scroll', function() {{
+            // 忽略初始加载时的滚动事件
+            if (isInitialLoad) return;
+            
             clearTimeout(scrollTimeout);
             scrollTimeout = setTimeout(function() {{
                 // 发送滚动信息到Qt
@@ -442,9 +458,14 @@ class EditorTab(QWidget):
         
         // 页面加载后恢复滚动位置
         window.addEventListener('load', function() {{
-            var scrollRatio = {current_scroll_ratio};
+            var scrollRatio = {preview_scroll_ratio};
             var scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
             window.scrollTo(0, scrollHeight * scrollRatio);
+            
+            // 延迟后开始监听用户滚动
+            setTimeout(function() {{
+                isInitialLoad = false;
+            }}, 100);
         }});
         </script>
         """
@@ -456,8 +477,16 @@ class EditorTab(QWidget):
         else:
             self.preview.setHtml(styled_html)
         
-        # 设置标题变化监听（用于接收滚动数据）
-        self.preview.page().titleChanged.connect(self.on_preview_title_changed)
+        # 恢复编辑器滚动位置和光标位置（确保编辑器不跳动）
+        self.editor.verticalScrollBar().setValue(editor_scroll_value)
+        cursor = self.editor.textCursor()
+        cursor.setPosition(cursor_position)
+        self.editor.setTextCursor(cursor)
+        
+        # 延迟解锁同步，等待预览加载完成
+        QTimer.singleShot(500, lambda: setattr(self, 'is_syncing', False))
+        
+        # 注意：titleChanged 信号连接已移至 __init__ 方法，避免重复连接
     
     def on_preview_title_changed(self, title):
         """预览窗口标题改变时（用于接收滚动数据）"""
@@ -1072,7 +1101,7 @@ class MarkdownEditor(QMainWindow):
             mid_space = m.group(5)
             val = m.group(6)
             # 转义第一个 [ 为 \[
-            return f"{prefix}{bullet}{bullet_space}\[{key}]:{mid_space}[{val}]"
+            return f"{prefix}{bullet}{bullet_space}\\[{key}]:{mid_space}[{val}]"
         
         # 匹配引用块中的围栏代码块起始/结束
         # Group 1: Prefix (e.g. "> ")
@@ -1207,7 +1236,7 @@ class MarkdownEditor(QMainWindow):
                 color: #24292e;
                 padding: 0.2em 0.4em;
                 margin: 0;
-                font-size: 85%;
+                font-size: 100%;
                 border-radius: 3px;
                 font-family: 'Consolas', 'Courier New', 'Cascadia Code', monospace;
             }}
@@ -1215,7 +1244,7 @@ class MarkdownEditor(QMainWindow):
                 background-color: #f6f8fa;
                 padding: 16px;
                 overflow: auto;
-                font-size: 85%;
+                font-size: 100%;
                 line-height: 1.45;
                 border-radius: 6px;
                 border: 1px solid #d1d5da;
