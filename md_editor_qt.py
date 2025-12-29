@@ -926,6 +926,12 @@ class MarkdownEditor(QMainWindow):
         self.toggle_toc_toolbar_action.triggered.connect(self.toggle_toc)
         toolbar.addAction(self.toggle_toc_toolbar_action)
 
+        toolbar.addSeparator()
+
+        table_action = QAction("📊 表格助手", self)
+        table_action.triggered.connect(self.open_table_helper)
+        toolbar.addAction(table_action)
+
     
     def create_statusbar(self):
         """创建状态栏"""
@@ -1177,6 +1183,22 @@ class MarkdownEditor(QMainWindow):
                 tab.toc_tree.show()
                 self.toggle_toc_action.setText("隐藏目录")
                 self.toggle_toc_toolbar_action.setText("📑 隐藏目录")
+
+    def open_table_helper(self):
+        """打开表格助手"""
+        try:
+            from table_helper import TableHelperDialog
+            dialog = TableHelperDialog(self)
+            if dialog.exec():
+                html = dialog.generate_html()
+                # 插入到当前编辑器
+                tab = self.get_current_tab()
+                if tab:
+                    tab.editor.textCursor().insertText(html)
+        except ImportError:
+            QMessageBox.warning(self, "错误", "无法加载表格助手模块(table_helper.py)")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"表格助手出错:\n{str(e)}")
     
     def handle_link_click(self, url):
         """处理链接点击事件"""
