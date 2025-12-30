@@ -1188,13 +1188,29 @@ class MarkdownEditor(QMainWindow):
         """打开表格助手"""
         try:
             from table_helper import TableHelperDialog
-            dialog = TableHelperDialog(self)
+            
+            # 获取当前选中的文本
+            tab = self.get_current_tab()
+            initial_content = None
+            if tab:
+                cursor = tab.editor.textCursor()
+                if cursor.hasSelection():
+                    initial_content = cursor.selectedText().replace("\u2029", "\n") # Qt text replacement for paragraph separator
+            
+            dialog = TableHelperDialog(self, initial_content)
+            
             if dialog.exec():
-                html = dialog.generate_html()
-                # 插入到当前编辑器
-                tab = self.get_current_tab()
+                new_content = dialog.generate_content()
+                
+                # 插入/替换文本
                 if tab:
-                    tab.editor.textCursor().insertText(html)
+                    cursor = tab.editor.textCursor()
+                    cursor.beginEditBlock()
+                    if cursor.hasSelection():
+                        cursor.removeSelectedText()
+                    cursor.insertText(new_content)
+                    cursor.endEditBlock()
+                    
         except ImportError:
             QMessageBox.warning(self, "错误", "无法加载表格助手模块(table_helper.py)")
         except Exception as e:

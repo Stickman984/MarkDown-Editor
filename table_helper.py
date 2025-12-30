@@ -4,13 +4,16 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QSpinBox, QLabel, QToolBar, QMessageBox, QWidget,
-    QComboBox, QFontComboBox, QColorDialog, QInputDialog
+    QComboBox, QFontComboBox, QColorDialog, QInputDialog, QApplication
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QAction, QIcon
+import re
+import html.parser
+
 
 class TableHelperDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, initial_content=None):
         super().__init__(parent)
         self.setWindowTitle("表格助手")
         self.resize(800, 600)
@@ -44,7 +47,11 @@ class TableHelperDialog(QDialog):
         layout.addLayout(btn_layout)
         
         # 初始化表格内容
-        self.init_table_items()
+        if initial_content and self.parse_content(initial_content):
+            pass # 解析成功，表格已更新
+        else:
+            self.init_table_items()
+
 
     def create_toolbar(self):
         self.toolbar = QToolBar()
@@ -103,6 +110,12 @@ class TableHelperDialog(QDialog):
         action_font = QAction("设置字体", self)
         action_font.triggered.connect(self.set_font)
         self.toolbar.addAction(action_font)
+
+        self.toolbar.addSeparator()
+
+        action_paste = QAction("📋 从剪贴板导入", self)
+        action_paste.triggered.connect(self.import_from_clipboard)
+        self.toolbar.addAction(action_paste)
 
     def init_table_items(self):
         """确保每个单元格都有Item对象"""
@@ -175,11 +188,290 @@ class TableHelperDialog(QDialog):
         if items:
             current_font = items[0].font()
             
-        ok, font = QFontDialog.getFont(current_font, self)
+            
+        font, ok = QFontDialog.getFont(current_font, self)
         if ok:
             for item in items:
                 item.setFont(font)
+    
+    def import_from_clipboard(self):
+        """从剪贴板导入内容"""
+        clipboard = QApplication.clipboard()
+        text = clipboard.text()
+        if text:
+            if self.parse_content(text):
+                QMessageBox.information(self, "成功", "已从剪贴板导入表格数据")
+            else:
+                QMessageBox.warning(self, "失败", "无法识别剪贴板中的表格内容")
+        else:
+            QMessageBox.warning(self, "提示", "剪贴板为空")
         
+    def parse_content(self, text):
+        """尝试解析内容并填充表格"""
+        text = text.strip()
+        if not text:
+            return False
+            
+        # 简单判断是HTML还是Markdown
+        if text.lower().startswith('<table'):
+            return self.parse_html_table(text)
+        elif '|' in text:
+            return self.parse_markdown_table(text)
+        return False
+
+    def parse_markdown_table(self, text):
+        """解析Markdown管道表格"""
+        lines = text.strip().split('\n')
+        if len(lines) < 2:
+            return False
+            
+        # 过滤分隔行 (---|---)
+        rows_data = []
+        for line in lines:
+            if not line.strip():
+                continue
+            # 简单检查是否是分隔行
+            if re.match(r'^\s*\|?\s*:?-+:?\s*\|', line):
+                continue
+                
+            parts = line.strip().strip('|').split('|')
+            rows_data.append([p.strip() for p in parts])
+            
+        if not rows_data:
+            return False
+            
+        rows = len(rows_data)
+        cols = max(len(r) for r in rows_data)
+        
+        self.spin_rows.setValue(rows)
+        self.spin_cols.setValue(cols)
+        self.table.setRowCount(rows)
+        self.table.setColumnCount(cols)
+        
+        for r, row_data in enumerate(rows_data):
+            for c, cell_text in enumerate(row_data):
+                if c < cols:
+                    self.table.setItem(r, c, QTableWidgetItem(cell_text))
+        
+        self.init_table_items() # 填充剩余空格
+        return True
+
+    def parse_html_table(self, text):
+        """解析HTML表格"""
+        try:
+            class TableParser(html.parser.HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.in_table = False
+                    self.in_row = False
+                    self.in_cell = False
+                    self.rows = []
+                    self.current_row = []
+                    self.current_cell_text = ""
+                    self.current_attrs = {}
+                    
+                def handle_starttag(self, tag, attrs):
+                    if tag == 'table':
+                        self.in_table = True
+                    elif tag == 'tr':
+                        self.in_row = True
+                        self.current_row = []
+                    elif tag in ('td', 'th'):
+                        self.in_cell = True
+                        self.current_cell_text = ""
+                        self.current_attrs = dict(attrs)
+                        
+                def handle_endtag(self, tag):
+                    if tag == 'tr':
+                        self.in_row = False
+                        self.rows.append(self.current_row)
+                    elif tag in ('td', 'th'):
+                        self.in_cell = False
+                        self.current_row.append({
+                            'text': self.current_cell_text,
+                            'rowspan': int(self.current_attrs.get('rowspan', 1)),
+                            'colspan': int(self.current_attrs.get('colspan', 1)),
+                            'style': self.current_attrs.get('style', '')
+                        })
+                        
+                def handle_data(self, data):
+                    if self.in_cell:
+                        self.current_cell_text += data
+
+            parser = TableParser()
+            parser.feed(text)
+            
+            if not parser.rows:
+                return False
+                
+            # 计算实际行列数（考虑colspan/rowspan）
+            # 这比较复杂，简化处理先假设结构规整
+            # 我们先设定一个足够大的表格，然后填充
+            row_count = len(parser.rows)
+            # 估算最大列数（第一行）
+            col_count = 0
+            for cell in parser.rows[0]:
+                 col_count += cell['colspan']
+            
+            # 使用更动态的方式计算 dimensions would be better, but tricky
+            # Let's adjust dynamically
+            
+            self.table.clear()
+            self.spin_rows.setValue(row_count)
+            self.spin_cols.setValue(col_count) # Approx
+            self.table.setRowCount(row_count)
+            self.table.setColumnCount(col_count)
+            
+            # 填充数据
+            # 需要处理 rowspans 导致的偏移
+            # grid matrix: True = occupied
+            grid = [[False for _ in range(col_count * 2)] for _ in range(row_count)]
+            
+            for r, row_data in enumerate(parser.rows):
+                current_c = 0
+                for cell in row_data:
+                    # 寻找下一个空闲位置
+                    while current_c < len(grid[0]) and grid[r][current_c]:
+                        current_c += 1
+                    
+                    if current_c >= self.table.columnCount():
+                         self.spin_cols.setValue(current_c + 1)
+                         self.table.setColumnCount(current_c + 1)
+                    
+                    # 填充内容
+                    item = QTableWidgetItem(cell['text'])
+                    self.table.setItem(r, current_c, item)
+                    
+                    # 解析样式
+                    style = cell['style'].lower()
+                    if 'font-weight: bold' in style:
+                        f = item.font()
+                        f.setBold(True)
+                        item.setFont(f)
+                    
+                    # 标记占用
+                    rs = cell['rowspan']
+                    cs = cell['colspan']
+                    
+                    if rs > 1 or cs > 1:
+                        self.table.setSpan(r, current_c, rs, cs)
+                    
+                    for i in range(rs):
+                        for j in range(cs):
+                            if r + i < row_count:
+                                grid[r+i][current_c+j] = True
+            
+            self.init_table_items()
+            return True
+        except Exception as e:
+            print(f"HTML Parse Error: {e}")
+            return False
+
+    def generate_content(self):
+        """智能生成内容（Markdown或HTML）"""
+        # 检查是否需要HTML
+        need_html = False
+        rows = self.table.rowCount()
+        cols = self.table.columnCount()
+        
+        for r in range(rows):
+            for c in range(cols):
+                # 检查合并
+                if self.table.rowSpan(r, c) > 1 or self.table.columnSpan(r, c) > 1:
+                    need_html = True
+                    break
+                    
+                item = self.table.item(r, c)
+                if item:
+                    # 检查特殊样式（除了居左对齐，因为MD默认居左）
+                    # Markdown支持 :---: (居中) ---: (居右)
+                    # 字体颜色/大小必须HTML
+                    font = item.font()
+                    if font.family() != self.font().family() or font.pointSize() > 12: # 简单判断
+                         need_html = True # 字体改变强制HTML
+                         break
+            if need_html:
+                break
+                
+        if need_html:
+            return self.generate_html()
+        else:
+            return self.generate_markdown()
+
+    def generate_markdown(self):
+        """生成Markdown管道表格"""
+        rows = self.table.rowCount()
+        cols = self.table.columnCount()
+        
+        # 收集数据和计算宽度
+        data = []
+        col_widths = [0] * cols
+        
+        # 1. 获取所有文本并计算列宽
+        for r in range(rows):
+            row_data = []
+            for c in range(cols):
+                item = self.table.item(r, c)
+                text = item.text().replace('|', '\\|') if item else ""
+                
+                # 处理换行
+                text = text.replace('\n', '<br>')
+                
+                # 处理加粗 (Markdown Export)
+                if item and item.font().bold():
+                     text = f"**{text}**"
+                
+                row_data.append(text)
+                
+                # 计算显示宽度
+                # 中文字符宽度处理比较麻烦，这里简单估算：len(text.encode('utf-8')) * 0.7
+                # 准确对其并不影响Markdown解析，只影响源码可读性
+                col_widths[c] = max(col_widths[c], len(text) * 2) 
+            data.append(row_data)
+            
+        # 最小宽度
+        col_widths = [max(w, 5) for w in col_widths]
+        
+        lines = []
+        
+        # 2. 表头（第一行）
+        header_contents = []
+        for c in range(cols):
+             header_contents.append(data[0][c].ljust(col_widths[c]))
+        lines.append(f"| {' | '.join(header_contents)} |")
+        
+        # 3. 分隔行（处理对齐）
+        sep_contents = []
+        for c in range(cols):
+            # 检查该列第一行的对齐方式
+            item = self.table.item(0, c)
+            align = item.textAlignment() if item else Qt.AlignmentFlag.AlignLeft
+            
+            # 默认居左 :---
+            # 居右 ---:
+            # 居中 :---:
+            
+            w = col_widths[c]
+            if align & Qt.AlignmentFlag.AlignRight:
+                 sep = "-" * (w - 1) + ":" 
+            elif align & Qt.AlignmentFlag.AlignHCenter:
+                 sep = ":" + "-" * (w - 2) + ":"
+            else:
+                 sep = "-" * w # Default Left, standard markdown often uses just dashes or :---
+            
+            sep_contents.append(sep)
+            
+        lines.append(f"| {' | '.join(sep_contents)} |")
+        
+        # 4. 数据行
+        for r in range(1, rows):
+            row_contents = []
+            for c in range(cols):
+                row_contents.append(data[r][c].ljust(col_widths[c]))
+            lines.append(f"| {' | '.join(row_contents)} |")
+            
+        return "\n".join(lines)
+
     def generate_html(self):
         """生成HTML表格代码"""
         html = ["<table border='1' style='border-collapse: collapse; width: 100%;'>"]
