@@ -16,7 +16,7 @@ import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
     QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
-    QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel
+    QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel, QSizePolicy
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
@@ -792,8 +792,9 @@ class MarkdownEditor(QMainWindow):
 
 
         
+        
         # 创建UI
-        self.create_menu()
+        # self.create_menu() # Removed
         self.create_toolbar()
         self.create_statusbar()
         self.create_tab_widget()
@@ -823,114 +824,76 @@ class MarkdownEditor(QMainWindow):
                 else:
                     self.open_file_in_tab(file_path, in_new_tab=True)
     
-    def create_menu(self):
-        """创建菜单栏"""
-        menubar = self.menuBar()
-        
-        # 文件菜单
-        file_menu = menubar.addMenu("文件(&F)")
-        
-        new_tab_action = QAction("新建标签页(&T)", self)
-        new_tab_action.setShortcut(QKeySequence("Ctrl+T"))
-        new_tab_action.triggered.connect(self.new_tab)
-        file_menu.addAction(new_tab_action)
-        
-        new_action = QAction("新建(&N)", self)
-        new_action.setShortcut(QKeySequence("Ctrl+N"))
-        new_action.triggered.connect(self.new_file)
-        file_menu.addAction(new_action)
-        
-        open_action = QAction("打开(&O)...", self)
-        open_action.setShortcut(QKeySequence("Ctrl+O"))
-        open_action.triggered.connect(self.open_file)
-        file_menu.addAction(open_action)
-        
-        save_action = QAction("保存(&S)", self)
-        save_action.setShortcut(QKeySequence("Ctrl+S"))
-        save_action.triggered.connect(self.save_file)
-        file_menu.addAction(save_action)
-        
-        save_as_action = QAction("另存为(&A)...", self)
-        save_as_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
-        save_as_action.triggered.connect(self.save_file_as)
-        file_menu.addAction(save_as_action)
-        
-        file_menu.addSeparator()
-        
-        close_tab_action = QAction("关闭标签页(&W)", self)
-        close_tab_action.setShortcut(QKeySequence("Ctrl+W"))
-        close_tab_action.triggered.connect(self.close_current_tab)
-        file_menu.addAction(close_tab_action)
-        
-        file_menu.addSeparator()
-        
-        exit_action = QAction("退出(&X)", self)
-        exit_action.setShortcut(QKeySequence("Alt+F4"))
-        exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
-        
-        # 视图菜单
-        view_menu = menubar.addMenu("视图(&V)")
-        
-        self.toggle_editor_action = QAction("隐藏编辑器", self)
-        self.toggle_editor_action.triggered.connect(self.toggle_editor)
-        view_menu.addAction(self.toggle_editor_action)
-        
-        self.toggle_preview_action = QAction("隐藏预览", self)
-        self.toggle_preview_action.triggered.connect(self.toggle_preview)
-        view_menu.addAction(self.toggle_preview_action)
-        
-        view_menu.addSeparator()
-        
-        self.toggle_toc_action = QAction("显示目录", self)
-        self.toggle_toc_action.triggered.connect(self.toggle_toc)
-        view_menu.addAction(self.toggle_toc_action)
+
     
     def create_toolbar(self):
         """创建工具栏"""
-        toolbar = QToolBar()
+        toolbar = QToolBar("Main")
+        # 设置工具栏样式：选中状态背景显示淡黄色
+        toolbar.setStyleSheet("""
+            QToolButton:checked {
+                background-color: #f8f1ef; /* 淡黄色 */
+                border: 1px solid #F0E68C;
+                border-radius: 3px;
+            }
+        """)
         self.addToolBar(toolbar)
         
-        # 标签页操作
+        # 1. New Tab
         new_tab_action = QAction("📑 新标签页", self)
         new_tab_action.triggered.connect(self.new_tab)
         toolbar.addAction(new_tab_action)
         
-        toolbar.addSeparator()
-        
-        # 文件操作
-        new_action = QAction("📄 新建", self)
-        new_action.triggered.connect(self.new_file)
-        toolbar.addAction(new_action)
-        
+        # 2. Open
         open_action = QAction("📂 打开", self)
         open_action.triggered.connect(self.open_file)
         toolbar.addAction(open_action)
         
+        # 3. Save
         save_action = QAction("💾 保存", self)
         save_action.triggered.connect(self.save_file)
         toolbar.addAction(save_action)
         
         toolbar.addSeparator()
         
-        # 视图切换
-        toggle_editor_action = QAction("📝 编辑器", self)
-        toggle_editor_action.triggered.connect(self.toggle_editor)
-        toolbar.addAction(toggle_editor_action)
+        # 4. Set Color
+        color_action = QAction("🎨 颜色", self)
+        color_action.triggered.connect(self.insert_color_tag)
+        toolbar.addAction(color_action)
         
-        toggle_preview_action = QAction("👁 预览", self)
-        toggle_preview_action.triggered.connect(self.toggle_preview)
-        toolbar.addAction(toggle_preview_action)
-        
-        self.toggle_toc_toolbar_action = QAction("📑 目录", self)
-        self.toggle_toc_toolbar_action.triggered.connect(self.toggle_toc)
-        toolbar.addAction(self.toggle_toc_toolbar_action)
-
-        toolbar.addSeparator()
-
+        # 5. Table Helper
         table_action = QAction("📊 表格助手", self)
         table_action.triggered.connect(self.open_table_helper)
         toolbar.addAction(table_action)
+
+        # Spacer to push View controls to the right
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        toolbar.addWidget(spacer)
+        
+        # 6. View Controls (Right Aligned)
+        
+        # Editor Toggle
+        self.toggle_editor_action = QAction("📝 编辑器", self)
+        self.toggle_editor_action.setCheckable(True)
+        self.toggle_editor_action.setChecked(True)
+        self.toggle_editor_action.triggered.connect(self.toggle_editor)
+        toolbar.addAction(self.toggle_editor_action)
+        
+        # Preview Toggle
+        self.toggle_preview_action = QAction("🖼 预览", self)
+        self.toggle_preview_action.setCheckable(True)
+        self.toggle_preview_action.setChecked(True)
+        self.toggle_preview_action.triggered.connect(self.toggle_preview)
+        toolbar.addAction(self.toggle_preview_action)
+        
+        # TOC Toggle
+        self.toggle_toc_toolbar_action = QAction("📑 目录", self)
+        self.toggle_toc_toolbar_action.setCheckable(True)
+        self.toggle_toc_toolbar_action.setChecked(False) # Default hidden? Or Check initial state
+        self.toggle_toc_toolbar_action.triggered.connect(self.toggle_toc)
+        toolbar.addAction(self.toggle_toc_toolbar_action)
+
 
     
     def create_statusbar(self):
@@ -1155,10 +1118,10 @@ class MarkdownEditor(QMainWindow):
         if tab:
             if tab.editor.isVisible():
                 tab.editor.hide()
-                self.toggle_editor_action.setText("显示编辑器")
+                self.toggle_editor_action.setChecked(False)
             else:
                 tab.editor.show()
-                self.toggle_editor_action.setText("隐藏编辑器")
+                self.toggle_editor_action.setChecked(True)
     
     def toggle_preview(self):
         """切换预览显示/隐藏"""
@@ -1166,10 +1129,10 @@ class MarkdownEditor(QMainWindow):
         if tab:
             if tab.preview.isVisible():
                 tab.preview.hide()
-                self.toggle_preview_action.setText("显示预览")
+                self.toggle_preview_action.setChecked(False)
             else:
                 tab.preview.show()
-                self.toggle_preview_action.setText("隐藏预览")
+                self.toggle_preview_action.setChecked(True)
     
     def toggle_toc(self):
         """切换目录显示/隐藏"""
@@ -1177,12 +1140,10 @@ class MarkdownEditor(QMainWindow):
         if tab:
             if tab.toc_tree.isVisible():
                 tab.toc_tree.hide()
-                self.toggle_toc_action.setText("显示目录")
-                self.toggle_toc_toolbar_action.setText("📑 目录")
+                self.toggle_toc_toolbar_action.setChecked(False)
             else:
                 tab.toc_tree.show()
-                self.toggle_toc_action.setText("隐藏目录")
-                self.toggle_toc_toolbar_action.setText("📑 隐藏目录")
+                self.toggle_toc_toolbar_action.setChecked(True)
 
     def open_table_helper(self):
         """打开表格助手"""
@@ -1215,6 +1176,36 @@ class MarkdownEditor(QMainWindow):
             QMessageBox.warning(self, "错误", "无法加载表格助手模块(table_helper.py)")
         except Exception as e:
             QMessageBox.critical(self, "错误", f"表格助手出错:\n{str(e)}")
+
+
+
+    def insert_color_tag(self):
+        """插入颜色标签"""
+        tab = self.get_current_tab()
+        if not tab:
+            return
+            
+        from PyQt6.QtWidgets import QColorDialog
+        
+        color = QColorDialog.getColor(Qt.GlobalColor.black, self, "选择颜色")
+        if color.isValid():
+            tag_start = f'<font color="{color.name()}">'
+            tag_end = '</font>'
+            
+            self._wrap_selection(tab.editor, tag_start, tag_end)
+            
+    def _wrap_selection(self, editor, start_tag, end_tag):
+        """在选中文本前后插入标签"""
+        cursor = editor.textCursor()
+        if cursor.hasSelection():
+            text = cursor.selectedText()
+            cursor.insertText(f"{start_tag}{text}{end_tag}")
+        else:
+            cursor.insertText(f"{start_tag}{end_tag}")
+            # 移动光标到标签中间
+            cursor.movePosition(QTextCursor.MoveOperation.Left, QTextCursor.MoveMode.MoveAnchor, len(end_tag))
+            editor.setTextCursor(cursor)
+            editor.setFocus()
     
     def handle_link_click(self, url):
         """处理链接点击事件"""

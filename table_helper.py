@@ -4,12 +4,43 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QSpinBox, QLabel, QToolBar, QMessageBox, QWidget,
-    QComboBox, QFontComboBox, QColorDialog, QInputDialog, QApplication
+    QComboBox, QFontComboBox, QColorDialog, QInputDialog, QApplication,
+    QPlainTextEdit
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QAction, QIcon
 import re
 import html.parser
+
+
+class ImportDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("导入表格数据")
+        self.resize(600, 400)
+        
+        layout = QVBoxLayout(self)
+        
+        layout.addWidget(QLabel("请将Markdown或HTML表格代码粘贴到下方:"))
+        
+        self.text_edit = QPlainTextEdit()
+        self.text_edit.setPlaceholderText("| Header 1 | Header 2 |\n| -------- | -------- |\n| Cell 1   | Cell 2   |")
+        layout.addWidget(self.text_edit)
+        
+        btn_layout = QHBoxLayout()
+        self.btn_import = QPushButton("导入")
+        self.btn_import.clicked.connect(self.accept)
+        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel.clicked.connect(self.reject)
+        
+        btn_layout.addStretch()
+        btn_layout.addWidget(self.btn_import)
+        btn_layout.addWidget(self.btn_cancel)
+        
+        layout.addLayout(btn_layout)
+        
+    def get_text(self):
+        return self.text_edit.toPlainText()
 
 
 class TableHelperDialog(QDialog):
@@ -45,6 +76,7 @@ class TableHelperDialog(QDialog):
         btn_layout.addWidget(self.btn_cancel)
         
         layout.addLayout(btn_layout)
+        
         
         # 初始化表格内容
         if initial_content and self.parse_content(initial_content):
@@ -107,13 +139,13 @@ class TableHelperDialog(QDialog):
         action_bold.triggered.connect(self.toggle_bold)
         self.toolbar.addAction(action_bold)
         
-        action_font = QAction("设置字体", self)
-        action_font.triggered.connect(self.set_font)
-        self.toolbar.addAction(action_font)
+        action_color = QAction("设置颜色", self)
+        action_color.triggered.connect(self.set_color)
+        self.toolbar.addAction(action_color)
 
         self.toolbar.addSeparator()
 
-        action_paste = QAction("📋 从剪贴板导入", self)
+        action_paste = QAction("📋 导入表格...", self)
         action_paste.triggered.connect(self.import_from_clipboard)
         self.toolbar.addAction(action_paste)
 
@@ -179,32 +211,30 @@ class TableHelperDialog(QDialog):
             font.setWeight(font_weight)
             item.setFont(font)
 
-    def set_font(self):
-        from PyQt6.QtWidgets import QFontDialog
-        
-        # 获取当前选中项的字体作为初始值
-        current_font = QFont()
-        items = self.table.selectedItems()
-        if items:
-            current_font = items[0].font()
-            
-            
-        font, ok = QFontDialog.getFont(current_font, self)
-        if ok:
+
+    def set_color(self):
+        color = QColorDialog.getColor(Qt.GlobalColor.black, self, "选择颜色")
+        if color.isValid():
+            items = self.table.selectedItems()
             for item in items:
-                item.setFont(font)
-    
+                item.setForeground(color)
+
     def import_from_clipboard(self):
-        """从剪贴板导入内容"""
+        """导入表格内容"""
+        dialog = ImportDialog(self)
+        
+        # 尝试自动填充剪贴板内容到对话框
         clipboard = QApplication.clipboard()
         text = clipboard.text()
         if text:
-            if self.parse_content(text):
-                QMessageBox.information(self, "成功", "已从剪贴板导入表格数据")
+            dialog.text_edit.setPlainText(text)
+            
+        if dialog.exec():
+            content = dialog.get_text()
+            if self.parse_content(content):
+                QMessageBox.information(self, "成功", "已导入表格数据")
             else:
-                QMessageBox.warning(self, "失败", "无法识别剪贴板中的表格内容")
-        else:
-            QMessageBox.warning(self, "提示", "剪贴板为空")
+                QMessageBox.warning(self, "失败", "无法识别表格内容")
         
     def parse_content(self, text):
         """尝试解析内容并填充表格"""
@@ -387,8 +417,18 @@ class TableHelperDialog(QDialog):
                     # Markdown支持 :---: (居中) ---: (居右)
                     # 字体颜色/大小必须HTML
                     font = item.font()
-                    if font.family() != self.font().family() or font.pointSize() > 12: # 简单判断
-                         need_html = True # 字体改变强制HTML
+                    fg = item.foreground().color()
+                    
+                    # 只有当字体/颜色显式修改过才强制HTML (简单比较)
+                    # 注意：Point Size 比较如果系统默认是9，那么需要宽容度，或者直接比较
+                    # if font.pointSize() != self.default_font.pointSize() or font.family() != self.default_font.family():
+                    # 这里为了简化，假设只要设置了font，通常就是要改
+                    
+                    # 颜色存在且不为黑/自动
+                    has_color = fg.isValid() and (fg != Qt.GlobalColor.black and fg.name() != "#000000")
+                    
+                    if has_color:
+                         need_html = True # 样式改变强制HTML
                          break
             if need_html:
                 break
@@ -531,13 +571,10 @@ class TableHelperDialog(QDialog):
                     if font.underline():
                         styles.append("text-decoration: underline")
                     
-                    # 只有当字体属性显式修改过才通过style输出，避免默认字体污染
-                    # 这里比较难判断是否修改过，简单起见，如果设置了特定字体，就输出
-                    # 我们可以通过比较默认字体和item字体
-                    # 但QFontDialog返回的字体通常带有具体属性
-                    # 这里我们输出 font-family 和 font-size
-                    styles.append(f"font-family: '{font.family()}'")
-                    styles.append(f"font-size: {font.pointSize()}pt")
+                    # 文本颜色
+                    fg = item.foreground().color()
+                    if fg.isValid() and (fg != Qt.GlobalColor.black and fg.name() != "#000000"):
+                        styles.append(f"color: {fg.name()}")
                         
                 if styles:
                     attrs.append(f"style='{'; '.join(styles)}'")
