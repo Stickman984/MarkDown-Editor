@@ -772,7 +772,8 @@ class MarkdownEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Markdown 编辑器 (Qt)")
-        self.setGeometry(100, 100, 1200, 800)
+        self.resize(1200, 800)
+        self.center_window()
         
         # Notepad++路径
         self.notepadpp_path = r"C:\Program Files\Notepad++\notepad++.exe"
@@ -1666,6 +1667,15 @@ class MarkdownEditor(QMainWindow):
         </html>
         """
     
+    def center_window(self):
+        """将窗口移动到屏幕中心"""
+        from PyQt6.QtGui import QGuiApplication
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        size = self.geometry()
+        x = (screen.width() - size.width()) // 2
+        y = (screen.height() - size.height()) // 2
+        self.move(x, y)
+
     def closeEvent(self, event):
         """关闭窗口前检查是否保存"""
         # 检查所有标签页是否有未保存的更改
@@ -1706,8 +1716,17 @@ def main():
         app.setWindowIcon(QIcon(icon_path))
     
     editor = MarkdownEditor()
-    editor.show()
     
+    # 强制将窗口置于最前并激活
+    editor.setWindowState(editor.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
+    editor.raise_()
+    editor.activateWindow()
+    # 针对 Windows 的强力置顶技巧：短暂设置置顶标志再取消
+    editor.setWindowFlags(editor.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+    editor.show() # 需要重新调用 show 以应用 flag
+    editor.setWindowFlags(editor.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+    editor.show()
+
     # 如果有命令行参数，尝试打开所有文件
     if len(sys.argv) > 1:
         for file_path in sys.argv[1:]:
