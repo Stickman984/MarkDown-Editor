@@ -841,18 +841,30 @@ class MarkdownEditor(QMainWindow):
         
         # 1. New Tab
         new_tab_action = QAction("📑 新标签页", self)
+        new_tab_action.setShortcut(QKeySequence("Ctrl+T"))
         new_tab_action.triggered.connect(self.new_tab)
         toolbar.addAction(new_tab_action)
+        self.addAction(new_tab_action)  # Add to window for global shortcut
         
         # 2. Open
         open_action = QAction("📂 打开", self)
+        open_action.setShortcut(QKeySequence("Ctrl+O"))
         open_action.triggered.connect(self.open_file)
         toolbar.addAction(open_action)
+        self.addAction(open_action)  # Add to window for global shortcut
         
         # 3. Save
         save_action = QAction("💾 保存", self)
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
         save_action.triggered.connect(self.save_file)
         toolbar.addAction(save_action)
+        self.addAction(save_action)  # Add to window for global shortcut
+        
+        # 3.5 Close Tab (Hidden Action for shortcut)
+        close_tab_action = QAction("关闭标签页", self)
+        close_tab_action.setShortcut(QKeySequence("Ctrl+W"))
+        close_tab_action.triggered.connect(self.close_current_tab)
+        self.addAction(close_tab_action)  # Add to window for global shortcut
         
         toolbar.addSeparator()
         
