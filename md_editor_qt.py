@@ -315,7 +315,7 @@ class EditorTab(QWidget):
         self.editor.setPlaceholderText("在此输入Markdown内容...")
         
         # 设置编辑器字体
-        font = QFont("Consolas", 11)
+        font = QFont("Consolas", 14)
         self.editor.setFont(font)
         
         # 应用语法高亮
@@ -356,7 +356,7 @@ class EditorTab(QWidget):
         
         # 缩放设置
         self.editor_zoom_level = 1.0
-        self.base_font_size = 11
+        self.base_font_size = 14
         
         # 增量更新设置
         self.preview_initialized = False  # 预览页面是否已初始化
@@ -1479,7 +1479,7 @@ class MarkdownEditor(QMainWindow):
         <style>
             body {{
                 font-family: 'Segoe UI', 'Microsoft YaHei', Arial, sans-serif;
-                font-size: 14px;
+                font-size: 18px;
                 line-height: 1.6;
                 color: #333;
                 max-width: 900px;
