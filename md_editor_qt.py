@@ -799,6 +799,14 @@ class MarkdownEditor(QMainWindow):
         self.create_statusbar()
         self.create_tab_widget()
         
+        # 检查 pygments 是否安装（用于代码高亮）
+        try:
+            import pygments
+            self.has_pygments = True
+        except ImportError:
+            self.has_pygments = False
+            QTimer.singleShot(1000, lambda: self.statusbar.showMessage("警告: 未检测到 pygments 库，代码高亮可能无法正常工作。请运行 'pip install pygments'", 10000))
+        
         # 启用拖放支持
         self.setAcceptDrops(True)
         
@@ -1578,6 +1586,69 @@ class MarkdownEditor(QMainWindow):
                 background-color: #e1e4e8;
                 border: 0;
             }}
+            
+            /* Pygments Syntax Highlighting (GitHub style) */
+            .codehilite .hll {{ background-color: #ffffcc }}
+            .codehilite .c {{ color: #6a737d; font-style: italic }} /* Comment */
+            .codehilite .err {{ color: #a61717; background-color: #e3d2d2 }} /* Error */
+            .codehilite .k {{ color: #d73a49; font-weight: bold }} /* Keyword */
+            .codehilite .o {{ color: #d73a49; font-weight: bold }} /* Operator */
+            .codehilite .cm {{ color: #6a737d; font-style: italic }} /* Comment.Multiline */
+            .codehilite .cp {{ color: #6a737d; font-weight: bold }} /* Comment.Preproc */
+            .codehilite .c1 {{ color: #6a737d; font-style: italic }} /* Comment.Single */
+            .codehilite .cs {{ color: #6a737d; font-weight: bold; font-style: italic }} /* Comment.Special */
+            .codehilite .gd {{ color: #000000; background-color: #ffdddd }} /* Generic.Deleted */
+            .codehilite .ge {{ font-style: italic }} /* Generic.Emph */
+            .codehilite .gr {{ color: #aa0000 }} /* Generic.Error */
+            .codehilite .gh {{ color: #999999 }} /* Generic.Heading */
+            .codehilite .gi {{ color: #000000; background-color: #ddffdd }} /* Generic.Inserted */
+            .codehilite .go {{ color: #888888 }} /* Generic.Output */
+            .codehilite .gp {{ color: #555555 }} /* Generic.Prompt */
+            .codehilite .gs {{ font-weight: bold }} /* Generic.Strong */
+            .codehilite .gu {{ color: #aaaaaa }} /* Generic.Subheading */
+            .codehilite .gt {{ color: #aa0000 }} /* Generic.Traceback */
+            .codehilite .kc {{ color: #d73a49; font-weight: bold }} /* Keyword.Constant */
+            .codehilite .kd {{ color: #d73a49; font-weight: bold }} /* Keyword.Declaration */
+            .codehilite .kn {{ color: #d73a49; font-weight: bold }} /* Keyword.Namespace */
+            .codehilite .kp {{ color: #d73a49; font-weight: bold }} /* Keyword.Pseudo */
+            .codehilite .kr {{ color: #d73a49; font-weight: bold }} /* Keyword.Reserved */
+            .codehilite .kt {{ color: #d73a49; font-weight: bold }} /* Keyword.Type */
+            .codehilite .m {{ color: #005cc5 }} /* Literal.Number */
+            .codehilite .s {{ color: #032f62 }} /* Literal.String */
+            .codehilite .na {{ color: #005cc5 }} /* Name.Attribute */
+            .codehilite .nb {{ color: #e36209 }} /* Name.Builtin */
+            .codehilite .nc {{ color: #6f42c1; font-weight: bold }} /* Name.Class */
+            .codehilite .no {{ color: #005cc5 }} /* Name.Constant */
+            .codehilite .nd {{ color: #6f42c1; font-weight: bold }} /* Name.Decorator */
+            .codehilite .ni {{ color: #6f42c1 }} /* Name.Entity */
+            .codehilite .ne {{ color: #6f42c1; font-weight: bold }} /* Name.Exception */
+            .codehilite .nf {{ color: #6f42c1; font-weight: bold }} /* Name.Function */
+            .codehilite .nl {{ color: #6f42c1; font-weight: bold }} /* Name.Label */
+            .codehilite .nn {{ color: #6f42c1 }} /* Name.Namespace */
+            .codehilite .nt {{ color: #22863a }} /* Name.Tag */
+            .codehilite .nv {{ color: #005cc5 }} /* Name.Variable */
+            .codehilite .ow {{ color: #d73a49; font-weight: bold }} /* Operator.Word */
+            .codehilite .w {{ color: #bbbbbb }} /* Text.Whitespace */
+            .codehilite .mf {{ color: #005cc5 }} /* Literal.Number.Float */
+            .codehilite .mh {{ color: #005cc5 }} /* Literal.Number.Hex */
+            .codehilite .mi {{ color: #005cc5 }} /* Literal.Number.Integer */
+            .codehilite .mo {{ color: #005cc5 }} /* Literal.Number.Oct */
+            .codehilite .sb {{ color: #032f62 }} /* Literal.String.Backtick */
+            .codehilite .sc {{ color: #032f62 }} /* Literal.String.Char */
+            .codehilite .sd {{ color: #032f62 }} /* Literal.String.Doc */
+            .codehilite .s2 {{ color: #032f62 }} /* Literal.String.Double */
+            .codehilite .se {{ color: #032f62 }} /* Literal.String.Escape */
+            .codehilite .sh {{ color: #032f62 }} /* Literal.String.Heredoc */
+            .codehilite .si {{ color: #032f62 }} /* Literal.String.Interpol */
+            .codehilite .sx {{ color: #032f62 }} /* Literal.String.Other */
+            .codehilite .sr {{ color: #032f62 }} /* Literal.String.Regex */
+            .codehilite .s1 {{ color: #032f62 }} /* Literal.String.Single */
+            .codehilite .ss {{ color: #032f62 }} /* Literal.String.Symbol */
+            .codehilite .bp {{ color: #e36209 }} /* Name.Builtin.Pseudo */
+            .codehilite .vc {{ color: #005cc5 }} /* Name.Variable.Class */
+            .codehilite .vg {{ color: #005cc5 }} /* Name.Variable.Global */
+            .codehilite .vi {{ color: #005cc5 }} /* Name.Variable.Instance */
+            .codehilite .il {{ color: #005cc5 }} /* Literal.Number.Integer.Long */
         </style>
         """
         
