@@ -26,6 +26,9 @@ from PyQt6.QtGui import (
     QColor, QFont, QTextCursor, QTextBlock, QIcon, QPixmap, QImage
 )
 import markdown
+import pygments
+from pygments import lexers, formatters, highlight
+import uuid
 
 
 def resource_path(relative_path):
@@ -567,6 +570,13 @@ class EditorTab(QWidget):
         self.main_window.md.reset()
         html_content = self.main_window.md.convert(text)
         
+        # 恢复预处理时暂存的代码块
+        # 这是为了解决 python-markdown 无法正确处理列表嵌套代码块的问题
+        # 我们在预处理阶段手动渲染了这些块，并用占位符替代，现在把它们换回来
+        if hasattr(self.main_window, 'code_block_stash'):
+            for placeholder, code_html in self.main_window.code_block_stash.items():
+                html_content = html_content.replace(placeholder, code_html)
+        
         # 获取baseUrl用于相对路径解析
         base_url = None
         base_url_str = ""
@@ -772,6 +782,9 @@ class MarkdownEditor(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Markdown 编辑器 (Qt)")
+        # 初始化代码块暂存区
+        self.code_block_stash = {}
+        
         self.resize(1200, 800)
         self.center_window()
         
@@ -1344,6 +1357,9 @@ class MarkdownEditor(QMainWindow):
         bq_prefix = ""
         bq_fence_marker = ""  # 记录开始的围栏标记（``` 或 ~~~）
         
+        # 清空暂存区
+        self.code_block_stash = {}
+
         # 匹配列表项中的围栏代码块（2+空格缩进）
         # Group 1: 缩进空格
         # Group 2: 围栏标记
@@ -1393,56 +1409,48 @@ class MarkdownEditor(QMainWindow):
             # 将其转换为缩进代码块（在原有缩进基础上再加4个空格）
             
             if in_list_fence_block:
-                # 检查结束围栏（只匹配纯净的围栏标记）
                 stripped_line = line.strip()
                 if stripped_line == list_fence_marker:
-                    # 结束围栏: 输出顶格的围栏标记，并添加空行
+                    # 结束围栏
                     in_list_fence_block = False
-                    processed_lines.append(list_fence_marker)
+                    
+                    # 渲染收集到的代码块
+                    full_code = "\n".join(current_fence_content)
+                    
+                    try:
+                        lexer = lexers.get_lexer_by_name(current_fence_lang)
+                    except:
+                        lexer = lexers.get_lexer_by_name("text")
+                    
+                    formatter = formatters.HtmlFormatter(style="github-dark", cssclass="codehilite")
+                    code_html = highlight(full_code, lexer, formatter)
+                    
+                    # 生成唯一占位符
+                    placeholder = f"PREPROCESSED_CODE_BLOCK_{uuid.uuid4().hex}"
+                    self.code_block_stash[placeholder] = code_html
+                    
+                    # 插入占位符（保持缩进，作为列表项的一部分）
+                    # 必须确保前后有空行，且缩进正确
+                    processed_lines.append(list_indent + placeholder)
                     processed_lines.append("")
                     continue
                 else:
-                    # 内容行：
-                    # 强制去缩进（提取到顶层），以绕过 python-markdown 的解析限制
-                    # 1. 尝试去除 list_indent
-                    content = line
-                    
-                    # 尝试将 Tab 展开为空格来去缩进
+                    # 内容行处理：智能去缩进
                     expanded_line = line.replace('\t', '    ')
                     expanded_indent = list_indent.replace('\t', '    ')
                     
-                    if expanded_line.startswith(expanded_indent):
-                         # 如果匹配标准列表缩进，去除它
-                         # 我们需要小心：我们不能简单 expanded_line[len:], 因为可能破坏了原始 Tab 结构
-                         # 简单的做法是：既然要提到底层，直接 strip() 或者 lstrip()？
-                         # 不，我们还是要保留代码内部的"相对缩进"。
-                         
-                         # 最稳妥的方法：既然我们确定这行属于代码块，
-                         # 我们只需要切掉 list_indent 长度的字符（如果它是空白的话）
-                         # 或者如果该行是 list_indent 开头的，直接切掉
-                         if line.startswith(list_indent):
-                             content = line[len(list_indent):]
-                         else:
-                             # 如果字符不完全匹配（混合Tab），尝试lstrip到什么程度？
-                             # 这种情况下，直接用 lstrip() 去除所有行首空白，
-                             # 然后假设所有代码都是相对于围栏对齐的？这可能会破坏内部缩进。
-                             # 
-                             # 回退策略：尽量保留内容
-                             # 如果 expanded_line 匹配 expanded_indent，
-                             # 说明视觉上是缩进对齐的。
-                             # 我们计算一下"额外的缩进"是多少
-                             extra_indent_len = len(expanded_line) - len(expanded_line.lstrip()) - len(expanded_indent)
-                             if extra_indent_len < 0: extra_indent_len = 0
-                             
-                             # 提取内容：去除所有空白，然后加上 extra_indent_len 个空格
-                             content = " " * extra_indent_len + line.lstrip()
-
+                    if line.startswith(list_indent):
+                        # 如果有完美前缀，直接剥离
+                        current_fence_content.append(line[len(list_indent):])
+                    elif expanded_line.startswith(expanded_indent):
+                        # 视觉对齐但字符不同
+                        # 计算额外缩进
+                        extra_indent_len = len(expanded_line) - len(expanded_line.lstrip()) - len(expanded_indent)
+                        if extra_indent_len < 0: extra_indent_len = 0
+                        current_fence_content.append(" " * extra_indent_len + line.lstrip())
                     else:
-                        # 如果连 list_indent 都不满足，说明是"更浅"的行（比如空行，或者乱缩进）
-                        # 直接 lstrip() 处理
-                        content = line.lstrip()
-
-                    processed_lines.append(content)
+                        # 缩进不足，保留原样或尽力修复
+                        current_fence_content.append(line.lstrip())
                     continue
             
             # 检查开始围栏（列表项）
@@ -1451,12 +1459,15 @@ class MarkdownEditor(QMainWindow):
                 in_list_fence_block = True
                 list_indent = list_match.group(1)
                 list_fence_marker = list_match.group(2)
-                lang = list_match.group(3)
+                lang = list_match.group(3).strip()
                 
-                # 插入空行
-                processed_lines.append("") 
-                # 输出顶格的开始围栏
-                processed_lines.append(list_fence_marker + lang)
+                current_fence_lang = lang if lang else "text"
+                current_fence_content = []
+                
+                # 插入缩进空行，确保分隔
+                processed_lines.append(list_indent.rstrip())
+                # 注意：我们这里不输出围栏行，因为我们要替换成占位符
+                # 后续内容行都会被 current_fence_content 捕获
                 continue
 
             # 2. 检测并修复根级围栏代码块标记
@@ -1567,6 +1578,7 @@ class MarkdownEditor(QMainWindow):
                 border: 1px solid #d1d5da;
                 white-space: pre;
                 margin: 8px 0;
+                font-family: 'Consolas', 'Courier New', 'Cascadia Code', monospace;
             }}
             pre code {{
                 background-color: transparent;
