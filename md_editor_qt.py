@@ -1338,16 +1338,20 @@ class MarkdownEditor(QMainWindow):
         # 匹配引用块中的围栏代码块起始/结束
         # Group 1: Prefix (e.g. "> ")
         # Group 2: Fence (e.g. "```")
-        bq_fence_pattern = re.compile(r'^(\s*(?:>\s*)+)(```|~~~)\s*$')
+        # 允许围栏后跟语言标识
+        bq_fence_pattern = re.compile(r'^(\s*(?:>\s*)+)(```|~~~)(.*)$')
         in_bq_fence_block = False
         bq_prefix = ""
+        bq_fence_marker = ""  # 记录开始的围栏标记（``` 或 ~~~）
         
-        # 匹配列表项中的围栏代码块（4+空格缩进）
+        # 匹配列表项中的围栏代码块（2+空格缩进）
         # Group 1: 缩进空格
         # Group 2: 围栏标记
-        list_fence_pattern = re.compile(r'^(\s{4,})(```|~~~)\s*$')
+        # 允许围栏后跟语言标识
+        list_fence_pattern = re.compile(r'^(\s{2,})(```|~~~)(.*)$')
         in_list_fence_block = False
         list_indent = ""
+        list_fence_marker = ""  # 记录开始的围栏标记
         
         for line in lines:
             # 1. 处理引用块中的围栏代码块
@@ -1360,8 +1364,9 @@ class MarkdownEditor(QMainWindow):
                     in_bq_fence_block = False
                     # 继续后续处理（RegEx escape等）
                 
-                # 检查结束围栏
-                elif line.strip() == (bq_prefix + "```").strip() or line.strip() == (bq_prefix + "~~~").strip():
+                # 检查结束围栏（只匹配纯净的围栏标记，不带语言标识）
+                stripped_content = line[len(bq_prefix):].strip() if line.startswith(bq_prefix) else line.strip()
+                if stripped_content == bq_fence_marker:
                     # 结束围栏，丢弃该行
                     in_bq_fence_block = False
                     continue
@@ -1379,6 +1384,7 @@ class MarkdownEditor(QMainWindow):
             if bq_match:
                 in_bq_fence_block = True
                 bq_prefix = bq_match.group(1)
+                bq_fence_marker = bq_match.group(2)  # 记录是 ``` 还是 ~~~
                 # 丢弃开始围栏行
                 continue
             
@@ -1387,37 +1393,70 @@ class MarkdownEditor(QMainWindow):
             # 将其转换为缩进代码块（在原有缩进基础上再加4个空格）
             
             if in_list_fence_block:
-                # 检查是否还在列表缩进内
-                if line.strip() == "" or line.startswith(list_indent):
-                    # 检查结束围栏
-                    stripped_line = line.strip()
-                    if stripped_line == "```" or stripped_line == "~~~":
-                        # 结束围栏，丢弃该行，并插入空行以正确分隔后续列表项
-                        in_list_fence_block = False
-                        processed_lines.append("")  # 插入空行
-                        continue
-                    else:
-                        # 内容行：转换为缩进代码块
-                        # 保持原有缩进，再添加4个空格
-                        if line.startswith(list_indent):
-                            content = line[len(list_indent):]
-                            new_line = list_indent + "    " + content
-                            processed_lines.append(new_line)
-                        else:
-                            processed_lines.append(line)
-                        continue
-                else:
-                    # 缩进中断，退出列表代码块模式
+                # 检查结束围栏（只匹配纯净的围栏标记）
+                stripped_line = line.strip()
+                if stripped_line == list_fence_marker:
+                    # 结束围栏: 输出顶格的围栏标记，并添加空行
                     in_list_fence_block = False
+                    processed_lines.append(list_fence_marker)
+                    processed_lines.append("")
+                    continue
+                else:
+                    # 内容行：
+                    # 强制去缩进（提取到顶层），以绕过 python-markdown 的解析限制
+                    # 1. 尝试去除 list_indent
+                    content = line
+                    
+                    # 尝试将 Tab 展开为空格来去缩进
+                    expanded_line = line.replace('\t', '    ')
+                    expanded_indent = list_indent.replace('\t', '    ')
+                    
+                    if expanded_line.startswith(expanded_indent):
+                         # 如果匹配标准列表缩进，去除它
+                         # 我们需要小心：我们不能简单 expanded_line[len:], 因为可能破坏了原始 Tab 结构
+                         # 简单的做法是：既然要提到底层，直接 strip() 或者 lstrip()？
+                         # 不，我们还是要保留代码内部的"相对缩进"。
+                         
+                         # 最稳妥的方法：既然我们确定这行属于代码块，
+                         # 我们只需要切掉 list_indent 长度的字符（如果它是空白的话）
+                         # 或者如果该行是 list_indent 开头的，直接切掉
+                         if line.startswith(list_indent):
+                             content = line[len(list_indent):]
+                         else:
+                             # 如果字符不完全匹配（混合Tab），尝试lstrip到什么程度？
+                             # 这种情况下，直接用 lstrip() 去除所有行首空白，
+                             # 然后假设所有代码都是相对于围栏对齐的？这可能会破坏内部缩进。
+                             # 
+                             # 回退策略：尽量保留内容
+                             # 如果 expanded_line 匹配 expanded_indent，
+                             # 说明视觉上是缩进对齐的。
+                             # 我们计算一下"额外的缩进"是多少
+                             extra_indent_len = len(expanded_line) - len(expanded_line.lstrip()) - len(expanded_indent)
+                             if extra_indent_len < 0: extra_indent_len = 0
+                             
+                             # 提取内容：去除所有空白，然后加上 extra_indent_len 个空格
+                             content = " " * extra_indent_len + line.lstrip()
+
+                    else:
+                        # 如果连 list_indent 都不满足，说明是"更浅"的行（比如空行，或者乱缩进）
+                        # 直接 lstrip() 处理
+                        content = line.lstrip()
+
+                    processed_lines.append(content)
+                    continue
             
             # 检查开始围栏（列表项）
             list_match = list_fence_pattern.match(line)
             if list_match:
                 in_list_fence_block = True
                 list_indent = list_match.group(1)
-                # 插入一个缩进空行（python-markdown需要空行才能识别为代码块）
-                processed_lines.append(list_indent)
-                # 丢弃开始围栏行
+                list_fence_marker = list_match.group(2)
+                lang = list_match.group(3)
+                
+                # 插入空行
+                processed_lines.append("") 
+                # 输出顶格的开始围栏
+                processed_lines.append(list_fence_marker + lang)
                 continue
 
             # 2. 检测并修复根级围栏代码块标记
