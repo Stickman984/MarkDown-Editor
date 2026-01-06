@@ -16,14 +16,17 @@ import datetime
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
     QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
-    QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel, QSizePolicy
+    QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel, QSizePolicy, QDialog,
+    QLineEdit, QPushButton, QHBoxLayout, QCheckBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PyQt6.QtCore import QUrl, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import (
     QAction, QKeySequence, QSyntaxHighlighter, QTextCharFormat,
-    QColor, QFont, QTextCursor, QTextBlock, QIcon, QPixmap, QImage
+    QColor, QFont, QTextCursor, QTextBlock, QIcon, QPixmap, QImage,
+    QTextDocument
+
 )
 import markdown
 import pygments
@@ -297,6 +300,87 @@ class MarkdownTextEdit(QPlainTextEdit):
         super().insertFromMimeData(source)
 
 
+class SearchDialog(QDialog):
+    """搜索对话框"""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("查找")
+        self.setFixedWidth(400)
+        self.setModal(False) # 非模态，允许操作编辑器
+        
+        layout = QVBoxLayout(self)
+        
+        # 搜索输入框
+        input_layout = QHBoxLayout()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("输入查找内容...")
+        self.search_input.textChanged.connect(self.on_text_changed)
+        self.search_input.returnPressed.connect(self.find_next)
+        input_layout.addWidget(self.search_input)
+        layout.addLayout(input_layout)
+        
+        # 选项
+        options_layout = QHBoxLayout()
+        self.case_sensitive = QCheckBox("区分大小写")
+        self.whole_words = QCheckBox("全字匹配")
+        options_layout.addWidget(self.case_sensitive)
+        options_layout.addWidget(self.whole_words)
+        options_layout.addStretch()
+        layout.addLayout(options_layout)
+        
+        # 按钮
+        btn_layout = QHBoxLayout()
+        self.find_prev_btn = QPushButton("查找上一个")
+        self.find_prev_btn.setAutoDefault(False)
+        self.find_prev_btn.setDefault(False)
+        self.find_prev_btn.clicked.connect(self.find_prev)
+        self.find_next_btn = QPushButton("查找下一个")
+        self.find_next_btn.setAutoDefault(False)
+        self.find_next_btn.setDefault(False)
+        self.find_next_btn.clicked.connect(self.find_next)
+        
+        btn_layout.addWidget(self.find_prev_btn)
+        btn_layout.addWidget(self.find_next_btn)
+        layout.addLayout(btn_layout)
+        
+        self.parent_editor = parent
+        
+    def find_next(self):
+        text = self.search_input.text()
+        if not text:
+            return
+        if self.parent_editor:
+            self.parent_editor.find_text(text, backward=False, 
+                                       case_sensitive=self.case_sensitive.isChecked(),
+                                       whole_words=self.whole_words.isChecked())
+            
+    def find_prev(self):
+        text = self.search_input.text()
+        if not text:
+            return
+        if self.parent_editor:
+            self.parent_editor.find_text(text, backward=True,
+                                       case_sensitive=self.case_sensitive.isChecked(),
+                                       whole_words=self.whole_words.isChecked())
+
+    def on_text_changed(self, text):
+        if not text:
+            if self.parent_editor:
+                tab = self.parent_editor.get_current_tab()
+                if tab:
+                    tab.clear_search_highlight()
+        else:
+            # 也可以选择在这里实时搜索，但可能会有性能问题，暂时保持归位
+            pass
+
+    def closeEvent(self, event):
+        if self.parent_editor:
+            tab = self.parent_editor.get_current_tab()
+            if tab:
+                tab.clear_search_highlight()
+        super().closeEvent(event)
+
+
 class EditorTab(QWidget):
     """单个编辑器标签页，包含编辑器和预览"""
     
@@ -371,6 +455,11 @@ class EditorTab(QWidget):
         # 监听预览窗口标题变化（用于接收滚动数据）
         # 注意：必须只连接一次，否则会导致重复触发滚动同步
         self.preview.page().titleChanged.connect(self.on_preview_title_changed)
+        
+        # 搜索相关
+        self.last_search_text = ""
+        self.search_cursor = None
+        self.current_match_index = -1  # 当前匹配项索引
         
         # 安装事件过滤器以捕获Ctrl+滚轮缩放
         self.editor.installEventFilter(self)
@@ -648,6 +737,95 @@ class EditorTab(QWidget):
                 isInitialLoad = false;
             }}, 100);
         }});
+        
+        // Search Highlight Function
+        let searchMatches = [];  // 存储所有匹配项
+        let currentMatchIndex = -1;
+        
+        function highlightText(text, caseSensitive) {{
+            // 1. Clear existing highlights
+            removeHighlights();
+            searchMatches = [];
+            currentMatchIndex = -1;
+            
+            if (!text) return;
+            
+            // 2. Find and highlight
+            const flags = caseSensitive ? 'g' : 'gi';
+            // Escape regex characters
+            const escapedText = text.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&');
+            const regex = new RegExp(escapedText, flags);
+            
+            const walker = document.createTreeWalker(
+                document.body,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+            
+            const nodes = [];
+            while(walker.nextNode()) nodes.push(walker.currentNode);
+            
+            nodes.forEach(node => {{
+                if (node.parentNode.className && node.parentNode.className.includes('search-match')) return;
+                
+                const matches = node.nodeValue.match(regex);
+                if (matches) {{
+                    const fragment = document.createDocumentFragment();
+                    let lastIndex = 0;
+                    let match;
+                    
+                    regex.lastIndex = 0;
+                    
+                    while ((match = regex.exec(node.nodeValue)) !== null) {{
+                        fragment.appendChild(document.createTextNode(node.nodeValue.substring(lastIndex, match.index)));
+                        
+                        const span = document.createElement('span');
+                        span.className = 'search-match';
+                        span.textContent = match[0];
+                        span.setAttribute('data-match-index', searchMatches.length);
+                        searchMatches.push(span);
+                        fragment.appendChild(span);
+                        
+                        lastIndex = regex.lastIndex;
+                    }}
+                    
+                    fragment.appendChild(document.createTextNode(node.nodeValue.substring(lastIndex)));
+                    
+                    node.parentNode.replaceChild(fragment, node);
+                }}
+            }});
+        }}
+        
+        function setActiveMatch(index) {{
+            // 移除之前的激活状态
+            if (currentMatchIndex >= 0 && currentMatchIndex < searchMatches.length) {{
+                searchMatches[currentMatchIndex].className = 'search-match';
+            }}
+            
+            // 设置新的激活项
+            currentMatchIndex = index;
+            if (index >= 0 && index < searchMatches.length) {{
+                searchMatches[index].className = 'search-match search-match-active';
+                // 滚动到可见区域
+                searchMatches[index].scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+            }}
+        }}
+        
+        function getMatchCount() {{
+            return searchMatches.length;
+        }}
+        
+        function removeHighlights() {{
+            const highlights = document.querySelectorAll('.search-match');
+            highlights.forEach(span => {{
+                const parent = span.parentNode;
+                parent.replaceChild(document.createTextNode(span.textContent), span);
+                parent.normalize();
+            }});
+            searchMatches = [];
+            currentMatchIndex = -1;
+        }}
         </script>
         """
         styled_html = styled_html.replace('</body>', scroll_script + '</body>')
@@ -778,14 +956,153 @@ class EditorTab(QWidget):
             QMessageBox.critical(self.main_window, "错误", f"无法保存文件:\n{str(e)}")
 
 
+    def do_find_text(self, text, backward=False, case_sensitive=False, whole_words=False):
+        """执行查找"""
+        if text != self.last_search_text:
+            # Editor重置
+            cursor = self.editor.textCursor()
+            cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.editor.setTextCursor(cursor)
+            
+            # Preview重置 (使用JS高亮所有匹配项)
+            self.highlight_preview_matches(text, case_sensitive)
+            self.current_match_index = -1  # 重置匹配索引
+            
+        self.last_search_text = text
+        
+        # 1. 编辑器查找
+        # 清除之前的编辑器高亮 (不清除预览高亮)
+        self.clear_editor_highlight()
+        
+        # 查找标志
+        flags = QTextDocument.FindFlag(0)
+        if backward:
+            flags |= QTextDocument.FindFlag.FindBackward
+        if case_sensitive:
+            flags |= QTextDocument.FindFlag.FindCaseSensitively
+        if whole_words:
+            flags |= QTextDocument.FindFlag.FindWholeWords
+            
+        found = self.editor.find(text, flags)
+        
+        if found:
+            # 找到后将光标滚动到屏幕中心，体验更好
+            self.editor.centerCursor()
+            # 高亮当前找到的文本（使用ExtraSearch Selection）
+            self.highlight_current_match()
+            # 同步预览滚动位置
+            self.sync_preview_scroll_to_cursor()
+            
+            # 更新预览中的当前匹配项
+            if backward:
+                self.current_match_index -= 1
+            else:
+                self.current_match_index += 1
+            self.set_active_preview_match(self.current_match_index)
+        else:
+            # 如果没找到，尝试从头/尾重新开始
+            # 移动光标到开始或结束
+            cursor = self.editor.textCursor()
+            if backward:
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+            else:
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+            self.editor.setTextCursor(cursor)
+            
+            # 重置索引
+            if backward:
+                self.current_match_index = -1  # 会被设置为最后一个
+            else:
+                self.current_match_index = -1  # 会被设置为0
+            
+            # 再找一次
+            # 再找一次
+            found = self.editor.find(text, flags)
+            if found:
+                self.editor.centerCursor()
+                self.highlight_current_match()
+                self.sync_preview_scroll_to_cursor()
+                
+                if backward:
+                    self.current_match_index -= 1
+                else:
+                    self.current_match_index += 1
+                self.set_active_preview_match(self.current_match_index)
+            else:
+                self.main_window.statusbar.showMessage(f"未找到: {text}")
+                
+        # 2. 预览查找 (不再使用 native findText，改为 JS 高亮所有)
+        # 只有当文本改变时才触发新的JS搜索 (已在上面处理)
+        # self.preview.findText(text, web_flags)
+        
+    def highlight_current_match(self):
+        """高亮当前匹配项（浅色背景）"""
+        # 获取当前光标选区
+        cursor = self.editor.textCursor()
+        if not cursor.hasSelection():
+            return
+            
+        from PyQt6.QtWidgets import QTextEdit
+        selection = QTextEdit.ExtraSelection()
+        selection.format.setBackground(QColor("#FFF9C4")) # 浅黄色背景
+        selection.format.setForeground(QColor("black"))
+        selection.cursor = cursor
+        
+        self.editor.setExtraSelections([selection])
+        
+    def clear_search_highlight(self):
+        """清除所有搜索高亮（编辑器+预览）"""
+        self.clear_editor_highlight()
+        # 清除预览高亮 (JS)
+        self.preview.page().runJavaScript("if(typeof removeHighlights === 'function') removeHighlights();")
+        
+        # 重置搜索状态
+        self.last_search_text = ""
+        self.current_match_index = -1
+        
+    def clear_editor_highlight(self):
+        """只清除编辑器高亮"""
+        self.editor.setExtraSelections([])
+
+    def highlight_preview_matches(self, text, case_sensitive=False):
+        """使用JS高亮预览中的所有匹配项"""
+        import json
+        js_code = f"highlightText({json.dumps(text)}, {str(case_sensitive).lower()});"
+        self.preview.page().runJavaScript(js_code)
+        
+    def set_active_preview_match(self, index):
+        """设置预览中的当前活动匹配项"""
+        js_code = f"if(typeof setActiveMatch === 'function') setActiveMatch({index});"
+        self.preview.page().runJavaScript(js_code)
+
+    def sync_preview_scroll_to_cursor(self):
+        """将预览滚动到当前光标对应的位置"""
+        # 获取光标所在的行号和总行数
+        cursor = self.editor.textCursor()
+        block_number = cursor.blockNumber()
+        total_blocks = self.editor.blockCount()
+        
+        if total_blocks > 0:
+            ratio = block_number / total_blocks
+            
+            # 执行 JS 滚动
+            js_code = f"""
+                var scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+                window.scrollTo(0, scrollHeight * {ratio});
+            """
+            self.preview.page().runJavaScript(js_code)
+
+
 class MarkdownEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Markdown 编辑器 (Qt)")
+        self.setWindowTitle(" ")
         # 初始化代码块暂存区
         self.code_block_stash = {}
+        self.search_dialog = None
+
         
-        self.resize(1200, 800)
+        self.resize(1500, 1000)
         self.center_window()
         
         # Notepad++路径
@@ -899,6 +1216,14 @@ class MarkdownEditor(QMainWindow):
         table_action = QAction("📊 表格助手", self)
         table_action.triggered.connect(self.open_table_helper)
         toolbar.addAction(table_action)
+        
+        # 5.5 Search
+        search_action = QAction("🔍 搜索", self)
+        search_action.setShortcut(QKeySequence("Ctrl+F"))
+        search_action.triggered.connect(self.open_search)
+        toolbar.addAction(search_action)
+        self.addAction(search_action) # Add global shortcut
+
 
         # Spacer to push View controls to the right
         spacer = QWidget()
@@ -1046,9 +1371,9 @@ class MarkdownEditor(QMainWindow):
             
             # 更新窗口标题
             if tab == self.get_current_tab():
-                window_title = "Markdown 编辑器 (Qt)"
+                window_title = "  "
                 if tab.current_file:
-                    window_title += f" - {os.path.basename(tab.current_file)}"
+                    window_title += f"    {os.path.basename(tab.current_file)}"
                 if tab.is_modified:
                     window_title += " *"
                 self.setWindowTitle(window_title)
@@ -1539,6 +1864,25 @@ class MarkdownEditor(QMainWindow):
                 background-color: #fff;
                 zoom: {zoom_level};
             }}
+            ::selection {{
+                background-color: #FFF9C4;
+                color: #000;
+                border-radius: 4px; /* Note: standard selection doesn't support this, but good practice for some engines */
+            }}
+            /* 用于可能的自定义高亮标签 */
+            .search-match {{
+                background-color: #FFF9C4;
+                border-radius: 4px;
+                padding: 0 2px;
+            }}
+            /* 当前选中的匹配项 - 更突出的样式 */
+            .search-match-active {{
+                background-color: #FFAB00;
+                color: #000;
+                border-radius: 4px;
+                padding: 0 2px;
+                box-shadow: 0 0 4px rgba(255, 171, 0, 0.8);
+            }}
             h1, h2, h3, h4, h5, h6 {{
                 color: #2c3e50;
                 margin-top: 24px;
@@ -1718,6 +2062,29 @@ class MarkdownEditor(QMainWindow):
         </html>
         """
     
+    def open_search(self):
+        """打开搜索对话框"""
+        if not self.search_dialog:
+            self.search_dialog = SearchDialog(self)
+        
+        # 如果有选中文本，自动填充
+        tab = self.get_current_tab()
+        if tab:
+            cursor = tab.editor.textCursor()
+            if cursor.hasSelection():
+                self.search_dialog.search_input.setText(cursor.selectedText())
+                self.search_dialog.search_input.selectAll()
+        
+        self.search_dialog.show()
+        self.search_dialog.activateWindow()
+        self.search_dialog.search_input.setFocus()
+        
+    def find_text(self, text, backward=False, case_sensitive=False, whole_words=False):
+        """执行查找"""
+        tab = self.get_current_tab()
+        if tab:
+            tab.do_find_text(text, backward, case_sensitive, whole_words)
+
     def center_window(self):
         """将窗口移动到屏幕中心"""
         from PyQt6.QtGui import QGuiApplication
@@ -1769,12 +2136,13 @@ def main():
     editor = MarkdownEditor()
     
     # 强制将窗口置于最前并激活
-    editor.setWindowState(editor.windowState() & ~Qt.WindowState.WindowMinimized | Qt.WindowState.WindowActive)
-    editor.raise_()
+    editor.show()
     editor.activateWindow()
+    editor.raise_()
+    
     # 针对 Windows 的强力置顶技巧：短暂设置置顶标志再取消
     editor.setWindowFlags(editor.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    editor.show() # 需要重新调用 show 以应用 flag
+    editor.show()
     editor.setWindowFlags(editor.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
     editor.show()
 
