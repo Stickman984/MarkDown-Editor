@@ -298,6 +298,23 @@ class TableHelperDialog(QDialog):
         self.spin_cols.setValue(self.table.columnCount())
         self.spin_cols.blockSignals(False)
 
+    def _get_visual_width(self, text):
+        """估算文本的视觉宽度 (CJK字符计为2，其他计为1)"""
+        width = 0
+        for char in text:
+            if ord(char) > 127:
+                width += 2
+            else:
+                width += 1
+        return width
+
+    def _visual_ljust(self, text, width):
+        """按视觉宽度进行左对齐填充"""
+        current_width = self._get_visual_width(text)
+        if current_width >= width:
+            return text
+        return text + " " * (width - current_width)
+
     def merge_cells(self):
         selected = self.table.selectedRanges()
         if not selected:
@@ -598,9 +615,8 @@ class TableHelperDialog(QDialog):
                 row_data.append(text)
                 
                 # 计算显示宽度
-                # 中文字符宽度处理比较麻烦，这里简单估算：len(text.encode('utf-8')) * 0.7
                 # 准确对其并不影响Markdown解析，只影响源码可读性
-                col_widths[c] = max(col_widths[c], len(text) * 2) 
+                col_widths[c] = max(col_widths[c], self._get_visual_width(text))
             data.append(row_data)
             
         # 最小宽度
@@ -611,7 +627,7 @@ class TableHelperDialog(QDialog):
         # 2. 表头（第一行）
         header_contents = []
         for c in range(cols):
-             header_contents.append(data[0][c].ljust(col_widths[c]))
+             header_contents.append(self._visual_ljust(data[0][c], col_widths[c]))
         lines.append(f"| {' | '.join(header_contents)} |")
         
         # 3. 分隔行（处理对齐）
@@ -641,7 +657,7 @@ class TableHelperDialog(QDialog):
         for r in range(1, rows):
             row_contents = []
             for c in range(cols):
-                row_contents.append(data[r][c].ljust(col_widths[c]))
+                row_contents.append(self._visual_ljust(data[r][c], col_widths[c]))
             lines.append(f"| {' | '.join(row_contents)} |")
             
         return "\n".join(lines)
