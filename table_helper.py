@@ -5,7 +5,7 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
     QPushButton, QSpinBox, QLabel, QToolBar, QMessageBox, QWidget,
     QComboBox, QFontComboBox, QColorDialog, QInputDialog, QApplication,
-    QPlainTextEdit
+    QPlainTextEdit, QMenu
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QFont, QColor, QAction, QIcon
@@ -51,14 +51,18 @@ class TableHelperDialog(QDialog):
         
         # 主要布局
         layout = QVBoxLayout(self)
+        layout.setSpacing(0)
         
         # 工具栏
         self.create_toolbar()
-        layout.addWidget(self.toolbar)
+        layout.addWidget(self.toolbar1)
+        layout.addWidget(self.toolbar2)
         
         # 表格控件
         self.table = QTableWidget(5, 5) # 默认5x5
         self.table.setAlternatingRowColors(True)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
         layout.addWidget(self.table)
         
         # 底部按钮
@@ -86,9 +90,10 @@ class TableHelperDialog(QDialog):
 
 
     def create_toolbar(self):
-        self.toolbar = QToolBar()
+        # 第一行工具栏：尺寸、格式、导入
+        self.toolbar1 = QToolBar()
+        self.toolbar1.setMovable(False)
         
-        # 行列操作
         self.spin_rows = QSpinBox()
         self.spin_rows.setRange(1, 100)
         self.spin_rows.setValue(5)
@@ -101,53 +106,117 @@ class TableHelperDialog(QDialog):
         self.spin_cols.setSuffix(" 列")
         self.spin_cols.valueChanged.connect(self.update_cols)
         
-        self.toolbar.addWidget(QLabel("尺寸:"))
-        self.toolbar.addWidget(self.spin_rows)
-        self.toolbar.addWidget(self.spin_cols)
-        
-        self.toolbar.addSeparator()
+        self.toolbar1.addWidget(QLabel(" 尺寸: "))
+        self.toolbar1.addWidget(self.spin_rows)
+        self.toolbar1.addWidget(self.spin_cols)
+        self.toolbar1.addSeparator()
         
         # 合并/拆分
         action_merge = QAction("合并单元格", self)
         action_merge.triggered.connect(self.merge_cells)
-        self.toolbar.addAction(action_merge)
+        self.toolbar1.addAction(action_merge)
         
         action_split = QAction("拆分单元格", self)
         action_split.triggered.connect(self.split_cells)
-        self.toolbar.addAction(action_split)
-        
-        self.toolbar.addSeparator()
+        self.toolbar1.addAction(action_split)
+        self.toolbar1.addSeparator()
         
         # 对齐方式
         action_align_left = QAction("居左", self)
         action_align_left.triggered.connect(lambda: self.set_alignment(Qt.AlignmentFlag.AlignLeft))
-        self.toolbar.addAction(action_align_left)
+        self.toolbar1.addAction(action_align_left)
         
         action_align_center = QAction("居中", self)
         action_align_center.triggered.connect(lambda: self.set_alignment(Qt.AlignmentFlag.AlignCenter))
-        self.toolbar.addAction(action_align_center)
+        self.toolbar1.addAction(action_align_center)
         
         action_align_right = QAction("居右", self)
         action_align_right.triggered.connect(lambda: self.set_alignment(Qt.AlignmentFlag.AlignRight))
-        self.toolbar.addAction(action_align_right)
-        
-        self.toolbar.addSeparator()
+        self.toolbar1.addAction(action_align_right)
+        self.toolbar1.addSeparator()
         
         # 字体样式
         action_bold = QAction("加粗", self)
         action_bold.setCheckable(True)
         action_bold.triggered.connect(self.toggle_bold)
-        self.toolbar.addAction(action_bold)
+        self.toolbar1.addAction(action_bold)
         
         action_color = QAction("设置颜色", self)
         action_color.triggered.connect(self.set_color)
-        self.toolbar.addAction(action_color)
-
-        self.toolbar.addSeparator()
+        self.toolbar1.addAction(action_color)
+        self.toolbar1.addSeparator()
 
         action_paste = QAction("📋 导入表格...", self)
         action_paste.triggered.connect(self.import_from_clipboard)
-        self.toolbar.addAction(action_paste)
+        self.toolbar1.addAction(action_paste)
+
+        # 第二行工具栏：行列操作
+        self.toolbar2 = QToolBar()
+        self.toolbar2.setMovable(False)
+        
+        self.toolbar2.addWidget(QLabel(" 行操作: "))
+        action_insert_row_up = QAction("🔼 向上插入行", self)
+        action_insert_row_up.triggered.connect(self.insert_row_above)
+        self.toolbar2.addAction(action_insert_row_up)
+
+        action_insert_row_down = QAction("🔽 向下插入行", self)
+        action_insert_row_down.triggered.connect(self.insert_row_below)
+        self.toolbar2.addAction(action_insert_row_down)
+
+        action_del_row = QAction("❌ 删除选中行", self)
+        action_del_row.triggered.connect(self.delete_selected_rows)
+        self.toolbar2.addAction(action_del_row)
+
+        self.toolbar2.addSeparator()
+
+        self.toolbar2.addWidget(QLabel(" 列操作: "))
+        action_insert_col_left = QAction("◀️ 向左插入列", self)
+        action_insert_col_left.triggered.connect(self.insert_col_left)
+        self.toolbar2.addAction(action_insert_col_left)
+
+        action_insert_col_right = QAction("▶️ 向右插入列", self)
+        action_insert_col_right.triggered.connect(self.insert_col_right)
+        self.toolbar2.addAction(action_insert_col_right)
+
+        action_del_col = QAction("❌ 删除选中列", self)
+        action_del_col.triggered.connect(self.delete_selected_cols)
+        self.toolbar2.addAction(action_del_col)
+
+    def show_context_menu(self, pos):
+        menu = QMenu(self)
+        
+        # 行操作子菜单/项
+        action_row_up = menu.addAction("🔼 向上插入行")
+        action_row_up.triggered.connect(self.insert_row_above)
+        
+        action_row_down = menu.addAction("🔽 向下插入行")
+        action_row_down.triggered.connect(self.insert_row_below)
+        
+        action_row_del = menu.addAction("❌ 删除选中行")
+        action_row_del.triggered.connect(self.delete_selected_rows)
+        
+        menu.addSeparator()
+        
+        # 列操作
+        action_col_left = menu.addAction("◀️ 向左插入列")
+        action_col_left.triggered.connect(self.insert_col_left)
+        
+        action_col_right = menu.addAction("▶️ 向右插入列")
+        action_col_right.triggered.connect(self.insert_col_right)
+        
+        action_col_del = menu.addAction("❌ 删除选中列")
+        action_col_del.triggered.connect(self.delete_selected_cols)
+        
+        menu.addSeparator()
+        
+        # 单元格格式
+        action_merge = menu.addAction("🔗 合并单元格")
+        action_merge.triggered.connect(self.merge_cells)
+        
+        action_split = menu.addAction("✂️ 拆分单元格")
+        action_split.triggered.connect(self.split_cells)
+        
+        menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def init_table_items(self):
         """确保每个单元格都有Item对象"""
@@ -163,6 +232,71 @@ class TableHelperDialog(QDialog):
     def update_cols(self, count):
         self.table.setColumnCount(count)
         self.init_table_items()
+
+    def insert_row_above(self):
+        curr = self.table.currentRow()
+        idx = max(0, curr)
+        self.table.insertRow(idx)
+        self._sync_spin_boxes()
+        self.init_table_items()
+
+    def insert_row_below(self):
+        curr = self.table.currentRow()
+        idx = curr + 1 if curr >= 0 else self.table.rowCount()
+        self.table.insertRow(idx)
+        self._sync_spin_boxes()
+        self.init_table_items()
+
+    def delete_selected_rows(self):
+        rows = set()
+        for r in self.table.selectedRanges():
+            for i in range(r.topRow(), r.bottomRow() + 1):
+                rows.add(i)
+        
+        if not rows:
+            return
+            
+        for r in sorted(list(rows), reverse=True):
+            self.table.removeRow(r)
+        
+        self._sync_spin_boxes()
+
+    def insert_col_left(self):
+        curr = self.table.currentColumn()
+        idx = max(0, curr)
+        self.table.insertColumn(idx)
+        self._sync_spin_boxes()
+        self.init_table_items()
+
+    def insert_col_right(self):
+        curr = self.table.currentColumn()
+        idx = curr + 1 if curr >= 0 else self.table.columnCount()
+        self.table.insertColumn(idx)
+        self._sync_spin_boxes()
+        self.init_table_items()
+
+    def delete_selected_cols(self):
+        cols = set()
+        for r in self.table.selectedRanges():
+            for i in range(r.leftColumn(), r.rightColumn() + 1):
+                cols.add(i)
+        
+        if not cols:
+            return
+            
+        for c in sorted(list(cols), reverse=True):
+            self.table.removeColumn(c)
+        
+        self._sync_spin_boxes()
+
+    def _sync_spin_boxes(self):
+        self.spin_rows.blockSignals(True)
+        self.spin_rows.setValue(self.table.rowCount())
+        self.spin_rows.blockSignals(False)
+        
+        self.spin_cols.blockSignals(True)
+        self.spin_cols.setValue(self.table.columnCount())
+        self.spin_cols.blockSignals(False)
 
     def merge_cells(self):
         selected = self.table.selectedRanges()
