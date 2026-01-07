@@ -13,6 +13,10 @@ import webbrowser
 import urllib.parse
 import shutil
 import datetime
+import json
+import http.server
+import socketserver
+import threading
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
     QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
@@ -1093,6 +1097,66 @@ class EditorTab(QWidget):
             self.preview.page().runJavaScript(js_code)
 
 
+class SettingsDialog(QDialog):
+    """设置对话框"""
+    def __init__(self, parent=None, config=None):
+        super().__init__(parent)
+        self.setWindowTitle("设置")
+        self.setFixedWidth(500)
+        self.config = config or {}
+        
+        layout = QVBoxLayout(self)
+        
+        # 1. 文本编辑器
+        editor_layout = QHBoxLayout()
+        editor_layout.addWidget(QLabel("文本编辑器:"))
+        self.editor_path = QLineEdit(self.config.get("text_editor", ""))
+        editor_layout.addWidget(self.editor_path)
+        editor_btn = QPushButton("浏览...")
+        editor_btn.clicked.connect(lambda: self.browse_path("text_editor", self.editor_path))
+        editor_layout.addWidget(editor_btn)
+        layout.addLayout(editor_layout)
+        
+        # 3. PDF阅读器
+        pdf_layout = QHBoxLayout()
+        pdf_layout.addWidget(QLabel("PDF阅读器 (可选):"))
+        self.pdf_path = QLineEdit(self.config.get("pdf_viewer", ""))
+        pdf_layout.addWidget(self.pdf_path)
+        pdf_btn = QPushButton("浏览...")
+        pdf_btn.clicked.connect(lambda: self.browse_path("pdf_viewer", self.pdf_path))
+        pdf_layout.addWidget(pdf_btn)
+        layout.addLayout(pdf_layout)
+        
+        layout.addStretch()
+        
+        # 按钮
+        btn_layout = QHBoxLayout()
+        save_btn = QPushButton("保存")
+        save_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(self.reject)
+        btn_layout.addStretch()
+        btn_layout.addWidget(save_btn)
+        btn_layout.addWidget(cancel_btn)
+        layout.addLayout(btn_layout)
+
+    def browse_path(self, key, line_edit):
+        filename, _ = QFileDialog.getOpenFileName(
+            self,
+            f"选择程序",
+            os.path.dirname(line_edit.text()) if line_edit.text() else "C:\\Program Files",
+            "可执行文件 (*.exe);;所有文件 (*.*)"
+        )
+        if filename:
+            line_edit.setText(filename)
+
+    def get_config(self):
+        return {
+            "text_editor": self.editor_path.text(),
+            "pdf_viewer": self.pdf_path.text()
+        }
+
+
 class MarkdownEditor(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -1100,13 +1164,17 @@ class MarkdownEditor(QMainWindow):
         # 初始化代码块暂存区
         self.code_block_stash = {}
         self.search_dialog = None
+        
+        # 加载配置
+        self.config_file = resource_path("md_config.json")
+        self.load_config()
 
         
         self.resize(1500, 1000)
         self.center_window()
         
-        # Notepad++路径
-        self.notepadpp_path = r"C:\Program Files\Notepad++\notepad++.exe"
+        # 默认Notepad++路径 (保持兼容性，但优先使用配置)
+        self.default_text_editor_path = r"C:\Program Files\Notepad++\notepad++.exe"
         
         # Markdown转换器
         # nl2br: 将单个换行符转换为<br>，支持列表中的换行显示
@@ -1143,6 +1211,57 @@ class MarkdownEditor(QMainWindow):
         
         # 不自动创建标签页，用户可以手动打开文件或新建
     
+    def load_config(self):
+        """从文件加载配置"""
+        self.config = {
+            "text_editor": None,
+            "pdf_viewer": None
+        }
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, 'r', encoding='utf-8') as f:
+                    file_config = json.load(f)
+                    self.config.update(file_config)
+            except Exception as e:
+                print(f"Error loading config: {e}")
+
+    def save_config(self):
+        """保存配置到文件"""
+        try:
+            with open(self.config_file, 'w', encoding='utf-8') as f:
+                json.dump(self.config, f, indent=4, ensure_ascii=False)
+        except Exception as e:
+            print(f"Error saving config: {e}")
+
+    def get_executor_path(self, key, title, file_filter):
+        """获取执行程序的路径，如果配置不存在则提示用户选择"""
+        path = self.config.get(key)
+        
+        # 检查路径是否有效
+        if not path or not os.path.exists(path):
+            # 如果是文本编辑器且有默认Notepad++，可以先尝试默认值
+            if key == "text_editor" and os.path.exists(self.default_text_editor_path):
+                self.config[key] = self.default_text_editor_path
+                self.save_config()
+                return self.default_text_editor_path
+
+            # 提示用户选择
+            filename, _ = QFileDialog.getOpenFileName(
+                self,
+                f"选择 {title} 程序",
+                "C:\\Program Files",
+                file_filter
+            )
+            
+            if filename:
+                self.config[key] = filename
+                self.save_config()
+                return filename
+            else:
+                return None
+        
+        return path
+
     def dragEnterEvent(self, event):
         """拖拽进入事件"""
         if event.mimeData().hasUrls():
@@ -1223,6 +1342,11 @@ class MarkdownEditor(QMainWindow):
         search_action.triggered.connect(self.open_search)
         toolbar.addAction(search_action)
         self.addAction(search_action) # Add global shortcut
+
+        # 5.6 Settings
+        settings_action = QAction("⚙️ 设置", self)
+        settings_action.triggered.connect(self.open_settings)
+        toolbar.addAction(settings_action)
 
 
         # Spacer to push View controls to the right
@@ -1536,7 +1660,14 @@ class MarkdownEditor(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"表格助手出错:\n{str(e)}")
 
-
+    def open_settings(self):
+        """打开设置对话框"""
+        dialog = SettingsDialog(self, self.config)
+        if dialog.exec():
+            new_config = dialog.get_config()
+            self.config.update(new_config)
+            self.save_config()
+            self.statusbar.showMessage("设置已保存", 3000)
 
     def insert_color_tag(self):
         """插入颜色标签"""
@@ -1615,13 +1746,75 @@ class MarkdownEditor(QMainWindow):
                                 '.py', '.js', '.java', '.c', '.cpp', '.h', '.cs',
                                 '.html', '.css', '.php', '.rb', '.go', '.rs', '.sh',
                                 '.bat', '.ini', '.cfg', '.conf']:
-                        # 文本文件 - 使用Notepad++打开
-                        if os.path.exists(self.notepadpp_path):
-                            subprocess.Popen([self.notepadpp_path, decoded_url])
-                            self.statusbar.showMessage(f"已在Notepad++中打开: {os.path.basename(decoded_url)}")
+                        # 文本文件 - 使用配置的编辑器打开
+                        editor_path = self.get_executor_path("text_editor", "文本编辑器", "可执行文件 (*.exe);;所有文件 (*.*)")
+                        if editor_path:
+                            subprocess.Popen([editor_path, decoded_url])
+                            self.statusbar.showMessage(f"已在编辑器中打开: {os.path.basename(decoded_url)}")
                         else:
                             os.startfile(decoded_url)
                             self.statusbar.showMessage(f"已打开: {os.path.basename(decoded_url)}")
+                    elif ext == '.pdf':
+                        # PDF文件
+                        pdf_viewer = self.config.get("pdf_viewer")
+                        if pdf_viewer and os.path.exists(pdf_viewer):
+                            subprocess.Popen([pdf_viewer, decoded_url])
+                            self.statusbar.showMessage(f"已在PDF阅读器中打开: {os.path.basename(decoded_url)}")
+                        else:
+                            os.startfile(decoded_url)
+                            self.statusbar.showMessage(f"已使用系统默认程序打开: {os.path.basename(decoded_url)}")
+                    elif ext == '.trace':
+                        # 基于用户提供的参考逻辑进行修改
+                        class PerfettoHttpHandler(http.server.SimpleHTTPRequestHandler):
+                            def end_headers(self):
+                                self.send_header('Access-Control-Allow-Origin', 'https://ui.perfetto.dev')
+                                self.send_header('Access-Control-Allow-Private-Network', 'true')
+                                super().end_headers()
+                            
+                            def do_GET(self):
+                                if self.path == '/' + self.server.expected_fname:
+                                    self.server.fname_get_completed = True
+                                return super().do_GET()
+                            
+                            def log_message(self, format, *args):
+                                pass
+
+                        def start_perfetto_server(file_path):
+                            try:
+                                port = 9001
+                                path = os.path.abspath(file_path)
+                                dirname = os.path.dirname(path)
+                                fname = os.path.basename(path)
+                                
+                                # 保存当前工作目录并切换到文件所在目录
+                                old_cwd = os.getcwd()
+                                os.chdir(dirname)
+                                
+                                try:
+                                    socketserver.TCPServer.allow_reuse_address = True
+                                    with socketserver.TCPServer(('127.0.0.1', port), PerfettoHttpHandler) as httpd:
+                                        httpd.expected_fname = fname
+                                        httpd.fname_get_completed = None
+                                        
+                                        address = f'https://ui.perfetto.dev/#!/?url=http://127.0.0.1:{port}/{fname}&referrer=atool'
+                                        
+                                        # 使用系统默认浏览器打开
+                                        webbrowser.open(address)
+                                            
+                                        self.statusbar.showMessage(f"正在 Serving trace 文件: {fname}")
+                                        
+                                        # 循环监听请求，直到文件被成功读取
+                                        while httpd.fname_get_completed is None:
+                                            httpd.handle_request()
+                                        
+                                        self.statusbar.showMessage(f"Trace 文件已发送给浏览器: {fname}", 5000)
+                                finally:
+                                    os.chdir(old_cwd)
+                            except Exception as e:
+                                print(f"Perfetto server error: {e}")
+
+                        # 在独立线程中启动服务器，避免阻塞主 UI 线程
+                        threading.Thread(target=start_perfetto_server, args=(decoded_url,), daemon=True).start()
                     else:
                         # 其他文件 - 使用系统默认程序
                         os.startfile(decoded_url)
