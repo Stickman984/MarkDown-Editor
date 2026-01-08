@@ -1,7 +1,11 @@
 {
     "text_editor": "C:\\Program Files\\Notepad++\\notepad++.exe",
     "pdf_viewer": "C:/Program Files/Google/Chrome/Application/chrome.exe",
-    "recent_files": [],
+    "recent_files": [
+        "D:\\Amlogic\\JIRA\\A-优化总结\\优化方法.md",
+        "D:\\Amlogic\\JIRA\\A-优化总结\\优化点.md",
+        "D:\\Amlogic\\Tools\\md_preview\\README.md"
+    ],
     "pinned_files": [],
     "chrome_path": "C:/Program Files/Google/Chrome/Application/chrome.exe"
 }

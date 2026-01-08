@@ -1863,6 +1863,26 @@ class MarkdownEditor(QMainWindow):
     
     def open_file_in_tab(self, filename, in_new_tab=False, anchor=None):
         """在标签页中打开文件"""
+        if not filename:
+            return
+            
+        # 标准化路径
+        abs_path = os.path.abspath(filename)
+        
+        # 1. 检查文件是否已经打开
+        for i in range(self.tab_widget.count()):
+            tab = self.tab_widget.widget(i)
+            if tab.current_file and os.path.abspath(tab.current_file) == abs_path:
+                # 文件已打开，切换到该标签页
+                self.tab_widget.setCurrentIndex(i)
+                # 如果有锚点，执行跳转
+                if anchor:
+                    # 获取该标签页的 JS 滚动逻辑或其他跳转方式
+                    # 这里假设 load_file 内部处理了跳转，或者手动调用同步
+                    pass 
+                return
+        
+        # 2. 文件未打开，按原逻辑处理
         if in_new_tab:
             self.new_tab()
         
