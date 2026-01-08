@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
     QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
     QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel, QSizePolicy, QDialog,
-    QLineEdit, QPushButton, QHBoxLayout, QCheckBox
+    QLineEdit, QPushButton, QHBoxLayout, QCheckBox, QMenu, QToolButton
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
@@ -1193,7 +1193,6 @@ class MarkdownEditor(QMainWindow):
         
         
         # 创建UI
-        # self.create_menu() # Removed
         self.create_toolbar()
         self.create_statusbar()
         self.create_tab_widget()
@@ -1215,7 +1214,8 @@ class MarkdownEditor(QMainWindow):
         """从文件加载配置"""
         self.config = {
             "text_editor": None,
-            "pdf_viewer": None
+            "pdf_viewer": None,
+            "recent_files": []
         }
         if os.path.exists(self.config_file):
             try:
@@ -1262,6 +1262,80 @@ class MarkdownEditor(QMainWindow):
         
         return path
 
+    def update_file_menu(self):
+        """更新文件菜单内容"""
+        self.file_menu.clear()
+        
+        # 1. 打开
+        open_action = QAction("📂 打开", self)
+        open_action.setShortcut(QKeySequence("Ctrl+O"))
+        open_action.triggered.connect(self.open_file)
+        self.file_menu.addAction(open_action)
+        
+        # 2. 新建标签
+        new_tab_action = QAction("📑 新建标签", self)
+        new_tab_action.setShortcut(QKeySequence("Ctrl+T"))
+        new_tab_action.triggered.connect(self.new_tab)
+        self.file_menu.addAction(new_tab_action)
+        
+        # 3. 保存
+        save_action = QAction("💾 保存", self)
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_action.triggered.connect(self.save_file)
+        self.file_menu.addAction(save_action)
+        
+        # 分隔符
+        self.file_menu.addSeparator()
+        
+        # 最近打开的文件
+        recent_files = self.config.get("recent_files", [])
+        if recent_files:
+            for file_path in recent_files:
+                if os.path.exists(file_path):
+                    action = QAction(os.path.basename(file_path), self)
+                    action.setData(file_path)
+                    action.triggered.connect(self.open_recent_file)
+                    self.file_menu.addAction(action)
+        else:
+            no_recent = QAction("无最近文件", self)
+            no_recent.setEnabled(False)
+            self.file_menu.addAction(no_recent)
+
+    def open_recent_file(self):
+        """打开最近的文件"""
+        action = self.sender()
+        if action:
+            file_path = action.data()
+            if os.path.exists(file_path):
+                self.open_file_in_tab(file_path, in_new_tab=True)
+            else:
+                QMessageBox.warning(self, "错误", f"找不到文件: {file_path}")
+                # 从列表中移除
+                if file_path in self.config["recent_files"]:
+                    self.config["recent_files"].remove(file_path)
+                    self.save_config()
+                    self.update_file_menu()
+
+    def add_to_recent_files(self, file_path):
+        """添加到最近打开过的文件列表"""
+        if not file_path:
+            return
+            
+        file_path = os.path.abspath(file_path)
+        recent = self.config.get("recent_files", [])
+        
+        # 如果已在列表中，先移除（为了移动到最前）
+        if file_path in recent:
+            recent.remove(file_path)
+            
+        # 添加到最前面
+        recent.insert(0, file_path)
+        
+        # 限制数量为10
+        self.config["recent_files"] = recent[:10]
+        self.save_config()
+        self.update_file_menu()
+
     def dragEnterEvent(self, event):
         """拖拽进入事件"""
         if event.mimeData().hasUrls():
@@ -1297,32 +1371,27 @@ class MarkdownEditor(QMainWindow):
         """)
         self.addToolBar(toolbar)
         
-        # 1. New Tab
-        new_tab_action = QAction("📑 新标签页", self)
-        new_tab_action.setShortcut(QKeySequence("Ctrl+T"))
-        new_tab_action.triggered.connect(self.new_tab)
-        toolbar.addAction(new_tab_action)
-        self.addAction(new_tab_action)  # Add to window for global shortcut
+        # 1. File Menu Button
+        self.file_menu_btn = QToolButton(self)
+        self.file_menu_btn.setText("📄文件")
+        # 移除小箭头 (CSS 隐藏 menu-indicator)
+        self.file_menu_btn.setStyleSheet("""
+            QToolButton::menu-indicator {
+                image: none;
+            }
+        """)
+        self.file_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.file_menu = QMenu(self)
+        self.file_menu.setStyleSheet("QMenu::indicator { width: 0px; }") # 菜单内也不显式占位
+        self.file_menu_btn.setMenu(self.file_menu)
+        self.update_file_menu()
+        toolbar.addWidget(self.file_menu_btn)
         
-        # 2. Open
-        open_action = QAction("📂 打开", self)
-        open_action.setShortcut(QKeySequence("Ctrl+O"))
-        open_action.triggered.connect(self.open_file)
-        toolbar.addAction(open_action)
-        self.addAction(open_action)  # Add to window for global shortcut
-        
-        # 3. Save
-        save_action = QAction("💾 保存", self)
-        save_action.setShortcut(QKeySequence("Ctrl+S"))
-        save_action.triggered.connect(self.save_file)
-        toolbar.addAction(save_action)
-        self.addAction(save_action)  # Add to window for global shortcut
-        
-        # 3.5 Close Tab (Hidden Action for shortcut)
-        close_tab_action = QAction("关闭标签页", self)
-        close_tab_action.setShortcut(QKeySequence("Ctrl+W"))
-        close_tab_action.triggered.connect(self.close_current_tab)
-        self.addAction(close_tab_action)  # Add to window for global shortcut
+        # 2. Add New Tab Shortcut (hidden)
+        self.new_tab_action = QAction("新建标签", self)
+        self.new_tab_action.setShortcut(QKeySequence("Ctrl+T"))
+        self.new_tab_action.triggered.connect(self.new_tab)
+        self.addAction(self.new_tab_action)
         
         toolbar.addSeparator()
         
@@ -1391,8 +1460,41 @@ class MarkdownEditor(QMainWindow):
         self.tab_widget.setTabsClosable(True)
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
+        # 监听标签页变动以移动 + 按钮
+        self.tab_widget.tabBar().currentChanged.connect(self.reposition_add_button)
         
         self.setCentralWidget(self.tab_widget)
+        
+        # 添加新建标签按钮 (+) 到标签栏
+        self.add_tab_button = QToolButton(self.tab_widget)
+        self.add_tab_button.setText("+")
+        self.add_tab_button.setToolTip("新建标签 (Ctrl+T)")
+        self.add_tab_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.add_tab_button.setFixedSize(26, 26)
+        # 方块背景样式
+        self.add_tab_button.setStyleSheet("""
+            QToolButton {
+                border: 1px solid #ddd;
+                background-color: #f5f5f5;
+                font-size: 18px;
+                font-weight: bold;
+                color: #555;
+                border-radius: 4px;
+            }
+            QToolButton:hover {
+                background-color: #e0e0e0;
+                border: 1px solid #ccc;
+                color: #000;
+            }
+            QToolButton:pressed {
+                background-color: #d0d0d0;
+            }
+        """)
+        self.add_tab_button.clicked.connect(self.new_tab)
+        
+        # 初始定位
+        QTimer.singleShot(100, self.reposition_add_button)
+        # 不再使用 setCornerWidget，改为手动控制位置
         
         # 创建背景标签（用于无标签页时显示）
         # 注意：将其作为tab_widget的子控件，这样它只会显示在内容区域
@@ -1436,14 +1538,55 @@ class MarkdownEditor(QMainWindow):
                 self.background_label.setPixmap(scaled_pixmap)
             
             self.update_background_visibility()
+            self.reposition_add_button()
             
     def update_background_visibility(self):
         """更新背景可见性"""
         if self.tab_widget.count() == 0:
             self.background_label.show()
-            self.background_label.raise_()  # 确保在最上层（因为没有标签页时）
+            self.background_label.raise_()
+            # 确保 + 按钮再次 raise 以便点击
+            self.add_tab_button.show()
+            self.add_tab_button.raise_()
         else:
             self.background_label.hide()
+            self.add_tab_button.show()
+            
+        self.reposition_add_button()
+        
+    def reposition_add_button(self):
+        """重新定位 + 按钮，使其紧靠最后一个标签页右侧"""
+        if not hasattr(self, 'add_tab_button') or not hasattr(self, 'tab_widget'):
+            return
+            
+        def do_move():
+            count = self.tab_widget.count()
+            tab_bar = self.tab_widget.tabBar()
+            
+            if count > 0:
+                # 获取最后一个标签的矩形 (相对于 tabBar)
+                last_rect = tab_bar.tabRect(count - 1)
+                if last_rect.isValid():
+                    # 映射到 tab_widget 坐标系
+                    x = tab_bar.x() + last_rect.right() + 8
+                    y = tab_bar.y() + (tab_bar.height() - self.add_tab_button.height()) // 2
+                    self.add_tab_button.move(x, y)
+                    self.add_tab_button.show()
+                    self.add_tab_button.raise_()
+            else:
+                # 没有标签时，显示在左侧
+                # 确保 y 不会太低导致被遮挡，通常标签栏高度在 30 左右
+                tab_h = max(tab_bar.height(), 30)
+                x = tab_bar.x() + 5
+                y = tab_bar.y() + (tab_h - self.add_tab_button.height()) // 2
+                # 再次确保 y 不为负
+                y = max(y, 2)
+                self.add_tab_button.move(x, y)
+                self.add_tab_button.show()
+                self.add_tab_button.raise_()
+                
+        # 使用定时器确保布局计算完成
+        QTimer.singleShot(0, do_move)
     
     def new_tab(self):
         """创建新标签页"""
@@ -1452,6 +1595,7 @@ class MarkdownEditor(QMainWindow):
         self.tab_widget.setCurrentIndex(index)
         tab.editor.setFocus()
         self.update_background_visibility()
+        self.reposition_add_button()
         return tab
         
         # 设置欢迎内容
@@ -1501,6 +1645,11 @@ class MarkdownEditor(QMainWindow):
                 if tab.is_modified:
                     window_title += " *"
                 self.setWindowTitle(window_title)
+            
+            # 重要：标题改变后宽度会变，需要重新定位 + 按钮
+            self.reposition_add_button()
+        else:
+            self.reposition_add_button()
     
     def on_tab_changed(self, index):
         """标签页切换事件"""
@@ -1556,6 +1705,8 @@ class MarkdownEditor(QMainWindow):
         tab = self.get_current_tab()
         if tab:
             tab.load_file(filename, anchor)
+            # 添加到最近文件
+            self.add_to_recent_files(filename)
     
     def save_file(self):
         """保存文件"""
