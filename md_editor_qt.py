@@ -32,6 +32,7 @@ from PyQt6.QtGui import (
     QTextDocument, QCursor
 
 )
+from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 import markdown
 import pygments
 from pygments import lexers, formatters, highlight
@@ -1173,6 +1174,10 @@ class MarkdownEditor(QMainWindow):
         self.resize(1500, 1000)
         self.center_window()
         
+        # 单实例运行支持
+        self.server_name = "MarkdownEditor_Main_Server_V3"
+        self.setup_local_server()
+        
         # 默认Notepad++路径 (保持兼容性，但优先使用配置)
         self.default_text_editor_path = r"C:\Program Files\Notepad++\notepad++.exe"
         
@@ -1397,6 +1402,62 @@ class MarkdownEditor(QMainWindow):
     
 
     
+    def setup_local_server(self):
+        """设置本地服务器以监听来自其他实例的消息"""
+        self.local_server = QLocalServer(self)
+        # 尝试移除旧的服务器
+        QLocalServer.removeServer(self.server_name)
+        
+        if not self.local_server.listen(self.server_name):
+            print(f"[Single Instance] 无法启动服务器: {self.local_server.errorString()}")
+            return
+            
+        print(f"[Single Instance] 服务器已启动: {self.server_name}")
+        self.local_server.newConnection.connect(self.on_new_local_connection)
+
+    def on_new_local_connection(self):
+        """处理新实例的连接"""
+        socket = self.local_server.nextPendingConnection()
+        if not socket:
+            return
+            
+        if socket.waitForReadyRead(3000):
+            data = socket.readAll().data().decode('utf-8')
+            print(f"[Single Instance] 收到远程指令: {data}")
+            
+            if data.startswith("OPEN:"):
+                paths_str = data[5:]
+                file_paths = paths_str.split('|')
+                for file_path in file_paths:
+                    if file_path:
+                        # 此处收到的是绝对路径
+                        self.open_file_in_tab(file_path, in_new_tab=True)
+            
+            # 不论什么指令，都激活窗口
+            self.activate_window_and_raise()
+            
+            socket.disconnectFromServer()
+        
+    def activate_window_and_raise(self):
+        """强力唤起窗口"""
+        if self.isMinimized():
+            self.showNormal()
+            
+        self.show()
+        self.raise_()
+        self.activateWindow()
+        
+        # Windows 特有的置顶层级操作，确保窗口跳出
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+        self.show()
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+        self.show()
+        
+        # 确保焦点在当前编辑器上
+        tab = self.get_current_tab()
+        if tab:
+            tab.editor.setFocus()
+
     def create_toolbar(self):
         """创建工具栏"""
         toolbar = QToolBar("Main")
@@ -2575,31 +2636,50 @@ def main():
     """主函数"""
     app = QApplication(sys.argv)
     
+    # 单实例检测服务名
+    server_name = "MarkdownEditor_Main_Server_V3"
+    
+    # 尝试连接现有实例
+    socket = QLocalSocket()
+    socket.connectToServer(server_name)
+    
+    if socket.waitForConnected(1000):
+        # 成功连接到已有实例
+        if len(sys.argv) > 1:
+            # 关键：在这里将所有路径转为绝对路径，这样主进程才能正确找到文件
+            # 因为子进程和主进程的工作目录可能不同
+            paths = []
+            for arg in sys.argv[1:]:
+                abs_path = os.path.abspath(arg)
+                if os.path.exists(abs_path):
+                    paths.append(abs_path)
+            
+            if paths:
+                msg = "OPEN:" + "|".join(paths)
+                socket.write(msg.encode('utf-8'))
+            else:
+                socket.write(b"ACTIVATE")
+        else:
+            socket.write(b"ACTIVATE")
+            
+        socket.waitForBytesWritten(1000)
+        socket.disconnectFromServer()
+        # 退出当前进程
+        sys.exit(0)
+    
     # 设置应用程序图标
     icon_path = resource_path("Gemini_Generated_Image_t2ldymt2ldymt2ld.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
     
     editor = MarkdownEditor()
+    editor.activate_window_and_raise()
     
-    # 强制将窗口置于最前并激活
-    editor.show()
-    editor.activateWindow()
-    editor.raise_()
-    
-    # 针对 Windows 的强力置顶技巧：短暂设置置顶标志再取消
-    editor.setWindowFlags(editor.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
-    editor.show()
-    editor.setWindowFlags(editor.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
-    editor.show()
-
-    # 如果有命令行参数，尝试打开所有文件
+    # 首次启动时的命令行处理
     if len(sys.argv) > 1:
         for file_path in sys.argv[1:]:
-            if os.path.exists(file_path):
-                # 检查是否是文件
-                if os.path.isfile(file_path):
-                    editor.open_file_in_tab(file_path, in_new_tab=True)
+            if os.path.isfile(file_path):
+                editor.open_file_in_tab(file_path, in_new_tab=True)
     
     sys.exit(app.exec())
 
