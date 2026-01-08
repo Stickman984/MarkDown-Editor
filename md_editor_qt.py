@@ -37,6 +37,7 @@ import markdown
 import pygments
 from pygments import lexers, formatters, highlight
 import uuid
+from path_completer import PathCompleter
 
 
 def resource_path(relative_path):
@@ -216,6 +217,74 @@ class MarkdownTextEdit(QPlainTextEdit):
     def __init__(self, editor_tab, parent=None):
         super().__init__(parent)
         self.editor_tab = editor_tab
+        
+        # 初始化路径补全器
+        self.completer = PathCompleter(self)
+        self.completer.setWidget(self)
+        self.completer.activated.connect(self.insert_completion)
+    
+    def insert_completion(self, completion):
+        """插入补全内容"""
+        if self.completer.widget() != self:
+            return
+        self.completer.insert_completion(completion, self)
+
+    def keyPressEvent(self, event):
+        """处理按键事件，用于触发补全"""
+        # 如果补全窗口可见，处理特定按键
+        if self.completer and self.completer.popup().isVisible():
+            if event.key() in (Qt.Key.Key_Enter, Qt.Key.Key_Return, Qt.Key.Key_Escape, Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                event.ignore()
+                return # 让补全器处理这些键
+
+        # 默认按键处理
+        is_shortcut = event.modifiers() & Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_E
+        if not is_shortcut: # 如果不是特定快捷键，先由基类处理（或者之后处理）
+            super().keyPressEvent(event)
+
+        # 补全触发逻辑
+        ctrl_or_shift = event.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.ShiftModifier)
+        if not self.completer or ctrl_or_shift:
+            return
+            
+        # 排除掉不需要触发的键（如下方向键、控制键等）
+        if event.key() in (Qt.Key.Key_Control, Qt.Key.Key_Shift, Qt.Key.Key_Alt, Qt.Key.Key_Meta, 
+                          Qt.Key.Key_Left, Qt.Key.Key_Right, Qt.Key.Key_Up, Qt.Key.Key_Down):
+            return
+
+        self.trigger_path_completion()
+
+    def trigger_path_completion(self):
+        """主动触发路径补全"""
+        if not self.completer:
+            return
+
+        # 获取光标前的文本
+        cursor = self.textCursor()
+        # 获取当前行光标前的内容
+        cursor.movePosition(cursor.MoveOperation.StartOfLine, cursor.MoveMode.KeepAnchor)
+        line_text = cursor.selectedText()
+        
+        # 提取路径前缀
+        path_prefix = self.completer.extract_path_prefix(line_text)
+        if path_prefix:
+            # 确保基准目录正确
+            if self.editor_tab.current_file:
+                base_dir = os.path.dirname(self.editor_tab.current_file)
+            else:
+                base_dir = os.getcwd()
+            self.completer.set_base_dir(base_dir)
+            
+            # 更新补全前缀并尝试显示
+            if self.completer.update_completion_prefix(path_prefix):
+                cr = self.cursorRect()
+                cr.setWidth(self.completer.popup().sizeHintForColumn(0) + 
+                           self.completer.popup().verticalScrollBar().sizeHint().width())
+                self.completer.complete(cr)
+            else:
+                self.completer.popup().hide()
+        else:
+            self.completer.popup().hide()
         
     def canInsertFromMimeData(self, source):
         if source.hasImage() or source.hasUrls():
@@ -1646,7 +1715,7 @@ class MarkdownEditor(QMainWindow):
         self.background_label.setScaledContents(False)  # 不拉伸内容
         
         # 尝试加载背景图片
-        bg_path = resource_path("cat_background_1764666718697.png")
+        bg_path = resource_path("./pic/cat_background_1764666718697.png")
         if os.path.exists(bg_path):
             pixmap = QPixmap(bg_path)
             # 保持宽高比缩放图片
@@ -2708,7 +2777,7 @@ def main():
         sys.exit(0)
     
     # 设置应用程序图标
-    icon_path = resource_path("Gemini_Generated_Image_t2ldymt2ldymt2ld.png")
+    icon_path = resource_path("./pic/Gemini_Generated_Image_t2ldymt2ldymt2ld.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
     
