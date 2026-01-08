@@ -51,6 +51,26 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
+def get_config_path(filename):
+    """获取持久化的配置文件路径 (AppData/Local/Tutu)"""
+    if sys.platform == "win32":
+        # 使用 LOCALAPPDATA 对应 AppData/Local
+        base_path = os.environ.get("LOCALAPPDATA", os.path.join(os.environ.get("USERPROFILE", os.path.expanduser("~")), "AppData", "Local"))
+        config_dir = os.path.join(base_path, "Tutu")
+    else:
+        # 非 Windows 系统放在家目录下的 .tutu 隐藏文件夹
+        config_dir = os.path.expanduser("~/.tutu")
+        
+    if not os.path.exists(config_dir):
+        try:
+            os.makedirs(config_dir)
+        except Exception:
+            # 如果创建失败，退而求其次使用当前目录
+            return filename
+            
+    return os.path.join(config_dir, filename)
+
+
 
 class MarkdownHighlighter(QSyntaxHighlighter):
     """Markdown语法高亮器"""
@@ -1167,7 +1187,7 @@ class MarkdownEditor(QMainWindow):
         self.search_dialog = None
         
         # 加载配置
-        self.config_file = resource_path("md_config.json")
+        self.config_file = get_config_path("md_config.json")
         self.load_config()
 
         
