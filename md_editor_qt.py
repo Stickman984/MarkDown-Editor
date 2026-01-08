@@ -1292,7 +1292,8 @@ class MarkdownEditor(QMainWindow):
         if recent_files:
             for file_path in recent_files:
                 if os.path.exists(file_path):
-                    action = QAction(os.path.basename(file_path), self)
+                    # 显示完整绝对路径
+                    action = QAction(file_path, self)
                     action.setData(file_path)
                     action.triggered.connect(self.open_recent_file)
                     self.file_menu.addAction(action)
@@ -1382,7 +1383,29 @@ class MarkdownEditor(QMainWindow):
         """)
         self.file_menu_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.file_menu = QMenu(self)
-        self.file_menu.setStyleSheet("QMenu::indicator { width: 0px; }") # 菜单内也不显式占位
+        # 简洁样式：无边框阴影，统一背景
+        self.file_menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                background-color: transparent;
+            }
+            QMenu::item:selected {
+                background-color: #f0f0f0;
+                color: #000000;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #e0e0e0;
+                margin: 4px 0px;
+            }
+            QMenu::indicator {
+                width: 0px;
+            }
+        """)
         self.file_menu_btn.setMenu(self.file_menu)
         self.update_file_menu()
         toolbar.addWidget(self.file_menu_btn)
