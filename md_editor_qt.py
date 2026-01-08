@@ -25,11 +25,11 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
-from PyQt6.QtCore import QUrl, Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import QUrl, Qt, QTimer, pyqtSlot, QEvent
 from PyQt6.QtGui import (
     QAction, QKeySequence, QSyntaxHighlighter, QTextCharFormat,
     QColor, QFont, QTextCursor, QTextBlock, QIcon, QPixmap, QImage,
-    QTextDocument
+    QTextDocument, QCursor
 
 )
 import markdown
@@ -1215,7 +1215,8 @@ class MarkdownEditor(QMainWindow):
         self.config = {
             "text_editor": None,
             "pdf_viewer": None,
-            "recent_files": []
+            "recent_files": [],
+            "pinned_files": []
         }
         if os.path.exists(self.config_file):
             try:
@@ -1287,17 +1288,33 @@ class MarkdownEditor(QMainWindow):
         # 分隔符
         self.file_menu.addSeparator()
         
-        # 最近打开的文件
+        # Pinned Files
+        pinned_files = self.config.get("pinned_files", [])
         recent_files = self.config.get("recent_files", [])
-        if recent_files:
-            for file_path in recent_files:
-                if os.path.exists(file_path):
-                    # 显示完整绝对路径
-                    action = QAction(file_path, self)
-                    action.setData(file_path)
-                    action.triggered.connect(self.open_recent_file)
-                    self.file_menu.addAction(action)
-        else:
+        
+        shown_pinned = 0
+        for file_path in pinned_files:
+            if os.path.exists(file_path):
+                action = QAction(f"📌 {file_path}", self)
+                action.setData(file_path)
+                action.triggered.connect(self.open_recent_file)
+                self.file_menu.addAction(action)
+                shown_pinned += 1
+        
+        if shown_pinned > 0 and any(f not in pinned_files for f in recent_files if os.path.exists(f)):
+            self.file_menu.addSeparator()
+            
+        # Other Recent Files
+        shown_recent = 0
+        for file_path in recent_files:
+            if file_path not in pinned_files and os.path.exists(file_path):
+                action = QAction(file_path, self)
+                action.setData(file_path)
+                action.triggered.connect(self.open_recent_file)
+                self.file_menu.addAction(action)
+                shown_recent += 1
+                
+        if shown_pinned == 0 and shown_recent == 0:
             no_recent = QAction("无最近文件", self)
             no_recent.setEnabled(False)
             self.file_menu.addAction(no_recent)
@@ -1316,6 +1333,27 @@ class MarkdownEditor(QMainWindow):
                     self.config["recent_files"].remove(file_path)
                     self.save_config()
                     self.update_file_menu()
+                    
+    def toggle_pin_file(self, file_path):
+        """置顶/取消置顶文件"""
+        pinned = self.config.setdefault("pinned_files", [])
+        if file_path in pinned:
+            pinned.remove(file_path)
+        else:
+            pinned.append(file_path)
+        self.save_config()
+        self.update_file_menu()
+        
+    def remove_from_recent(self, file_path):
+        """从最近列表中完全移除文件"""
+        recent = self.config.get("recent_files", [])
+        pinned = self.config.get("pinned_files", [])
+        if file_path in recent:
+            recent.remove(file_path)
+        if file_path in pinned:
+            pinned.remove(file_path)
+        self.save_config()
+        self.update_file_menu()
 
     def add_to_recent_files(self, file_path):
         """添加到最近打开过的文件列表"""
@@ -1407,6 +1445,7 @@ class MarkdownEditor(QMainWindow):
             }
         """)
         self.file_menu_btn.setMenu(self.file_menu)
+        self.file_menu.installEventFilter(self) # 安装事件过滤器处理右键菜单
         self.update_file_menu()
         toolbar.addWidget(self.file_menu_btn)
         
@@ -1683,6 +1722,47 @@ class MarkdownEditor(QMainWindow):
                 self.statusbar.showMessage(f"当前: {tab.current_file}")
             else:
                 self.statusbar.showMessage("就绪")
+                
+    def eventFilter(self, obj, event):
+        """事件过滤器：处理最近文件右键菜单"""
+        if obj == self.file_menu and event.type() == QEvent.Type.MouseButtonPress:
+            if event.button() == Qt.MouseButton.RightButton:
+                # 获取右键点击位置的动作
+                action = self.file_menu.actionAt(event.pos())
+                if action and action.data():
+                    file_path = action.data()
+                    self.show_recent_file_context_menu(file_path)
+                    return True
+        return super().eventFilter(obj, event)
+
+    def show_recent_file_context_menu(self, file_path):
+        """显示最近文件的右键菜单"""
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+            }
+            QMenu::item {
+                padding: 4px 20px;
+            }
+            QMenu::item:selected {
+                background-color: #f0f0f0;
+                color: #000000;
+            }
+        """)
+        
+        is_pinned = file_path in self.config.get("pinned_files", [])
+        pin_label = "📌 取消置顶" if is_pinned else "📌 置顶"
+        pin_action = QAction(pin_label, self)
+        pin_action.triggered.connect(lambda: self.toggle_pin_file(file_path))
+        menu.addAction(pin_action)
+        
+        remove_action = QAction("❌ 从列表中移除", self)
+        remove_action.triggered.connect(lambda: self.remove_from_recent(file_path))
+        menu.addAction(remove_action)
+        
+        menu.exec(QCursor.pos())
     
     def new_file(self):
         """新建文件（在当前标签页）"""
