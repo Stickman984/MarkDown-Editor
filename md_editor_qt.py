@@ -732,6 +732,21 @@ class EditorTab(QWidget):
             self.editor.setTextCursor(cursor)
             self.editor.centerCursor() # 滚动到可见区域
             self.editor.setFocus()
+            
+            # --- 新增：同时滚动预览到对应标题顶部 ---
+            # 1. 获取标题文本 (假设目录项第一列是标题)
+            title = item.text(0)
+            
+            # 2. 暂停自动同步，防止编辑器滚动触发的 on_editor_scroll 覆盖我们的定位
+            self.is_syncing = True
+            
+            # 3. 执行JS滚动
+            import json
+            js_code = f"scrollToHeader({json.dumps(title)});"
+            self.preview.page().runJavaScript(js_code)
+            
+            # 4. 延迟恢复同步
+            QTimer.singleShot(500, lambda: setattr(self, 'is_syncing', False))
 
     def update_preview(self):
         """更新预览（支持增量DOM更新以减少闪烁）"""
@@ -932,6 +947,33 @@ class EditorTab(QWidget):
             }});
             searchMatches = [];
             currentMatchIndex = -1;
+        }}
+        function removeHighlights() {{
+            const highlights = document.querySelectorAll('.search-match');
+            highlights.forEach(span => {{
+                const parent = span.parentNode;
+                parent.replaceChild(document.createTextNode(span.textContent), span);
+                parent.normalize();
+            }});
+            searchMatches = [];
+            currentMatchIndex = -1;
+        }}
+        
+        // Scroll to Header Function
+        function scrollToHeader(headerText) {{
+            if (!headerText) return;
+            
+            const headers = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+            for (let i = 0; i < headers.length; i++) {{
+                // 简单的文本匹配，忽略空白
+                if (headers[i].textContent.trim() === headerText.trim()) {{
+                    headers[i].scrollIntoView({{
+                        behavior: 'smooth',
+                        block: 'start' // 滚动到视口顶部
+                    }});
+                    return;
+                }}
+            }}
         }}
         </script>
         """
