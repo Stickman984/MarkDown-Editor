@@ -538,6 +538,7 @@ class EditorTab(QWidget):
         # 缩放设置
         self.editor_zoom_level = 1.0
         self.base_font_size = 14
+        self.preview_expanded = False # 预览是否展开（宽度变大）
         
         # 增量更新设置
         self.preview_initialized = False  # 预览页面是否已初始化
@@ -612,6 +613,13 @@ class EditorTab(QWidget):
                 return True
         
         return super().eventFilter(obj, event)
+    
+    def set_preview_expanded(self, expanded):
+        """设置预览是否展开（宽度变大）"""
+        self.preview_expanded = expanded
+        max_width = 1350 if expanded else 900
+        js_code = f"document.body.style.maxWidth = '{max_width}px';"
+        self.preview.page().runJavaScript(js_code)
     
     def update_editor_zoom(self):
         """更新编辑器缩放"""
@@ -791,10 +799,15 @@ class EditorTab(QWidget):
     def _full_reload_preview(self, html_content, base_url, base_url_str, preview_scroll_ratio):
         """完全重新加载预览页面"""
         # 包装样式，但内容放在特定容器中
+        
+        # 确定最大宽度
+        max_width = 1350 if getattr(self, 'preview_expanded', False) else 900
+        
         styled_html = self.main_window.wrap_html(
             f'<div id="md-content">{html_content}</div>',
             self.preview.zoom_level,
-            base_path=os.path.dirname(self.current_file) if self.current_file else None
+            base_path=os.path.dirname(self.current_file) if self.current_file else None,
+            max_width=max_width
         )
         
         # 添加滚动监听脚本和自动恢复滚动位置脚本
@@ -2025,9 +2038,11 @@ class MarkdownEditor(QMainWindow):
         if tab:
             if tab.editor.isVisible():
                 tab.editor.hide()
+                tab.set_preview_expanded(True)
                 self.toggle_editor_action.setChecked(False)
             else:
                 tab.editor.show()
+                tab.set_preview_expanded(False)
                 self.toggle_editor_action.setChecked(True)
     
     def toggle_preview(self):
@@ -2456,7 +2471,7 @@ class MarkdownEditor(QMainWindow):
             
         return '\n'.join(processed_lines)
 
-    def wrap_html(self, content, zoom_level=1.0, base_path=None):
+    def wrap_html(self, content, zoom_level=1.0, base_path=None, max_width=900):
         """包装HTML内容并添加样式"""
         
         # 如果有 base_path，生成 base 标签用于正确解析相对链接
@@ -2475,7 +2490,7 @@ class MarkdownEditor(QMainWindow):
                 font-size: 18px;
                 line-height: 1.6;
                 color: #333;
-                max-width: 900px;
+                max-width: {max_width}px;
                 margin: 20px auto;
                 padding: 20px;
                 background-color: #fff;
