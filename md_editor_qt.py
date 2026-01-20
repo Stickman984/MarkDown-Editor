@@ -21,7 +21,7 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QTabWidget, QSplitter, QPlainTextEdit,
     QFileDialog, QMessageBox, QToolBar, QStatusBar, QWidget, QVBoxLayout,
     QTreeWidget, QTreeWidgetItem, QHeaderView, QLabel, QSizePolicy, QDialog,
-    QLineEdit, QPushButton, QHBoxLayout, QCheckBox, QMenu, QToolButton
+    QLineEdit, QPushButton, QHBoxLayout, QCheckBox, QMenu, QToolButton, QSpinBox
 )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
@@ -617,7 +617,14 @@ class EditorTab(QWidget):
     def set_preview_expanded(self, expanded):
         """设置预览是否展开（宽度变大）"""
         self.preview_expanded = expanded
-        max_width = 1350 if expanded else 900
+        
+        # 如果编辑器隐藏（展开模式），使用用户定义的宽度；
+        # 如果编辑器可见，则保持默认 900px。
+        if expanded:
+            max_width = self.main_window.config.get("max_width", 1350)
+        else:
+            max_width = 900
+            
         js_code = f"document.body.style.maxWidth = '{max_width}px';"
         self.preview.page().runJavaScript(js_code)
     
@@ -816,7 +823,12 @@ class EditorTab(QWidget):
         # 包装样式，但内容放在特定容器中
         
         # 确定最大宽度
-        max_width = 1350 if getattr(self, 'preview_expanded', False) else 900
+        # 如果编辑器隐藏（展开模式），使用用户定义的宽度；
+        # 如果编辑器可见，则保持默认 900px。
+        if getattr(self, 'preview_expanded', False):
+            max_width = self.main_window.config.get("max_width", 1350)
+        else:
+            max_width = 900
         
         styled_html = self.main_window.wrap_html(
             f'<div id="md-content">{html_content}</div>',
@@ -1244,33 +1256,52 @@ class EditorTab(QWidget):
 
 class SettingsDialog(QDialog):
     """设置对话框"""
-    def __init__(self, parent=None, config=None):
+    def __init__(self, parent=None, config=None, mode="all"):
         super().__init__(parent)
         self.setWindowTitle("设置")
         self.setFixedWidth(500)
         self.config = config or {}
+        self.mode = mode
         
         layout = QVBoxLayout(self)
         
-        # 1. 文本编辑器
-        editor_layout = QHBoxLayout()
-        editor_layout.addWidget(QLabel("文本编辑器:"))
-        self.editor_path = QLineEdit(self.config.get("text_editor", ""))
-        editor_layout.addWidget(self.editor_path)
-        editor_btn = QPushButton("浏览...")
-        editor_btn.clicked.connect(lambda: self.browse_path("text_editor", self.editor_path))
-        editor_layout.addWidget(editor_btn)
-        layout.addLayout(editor_layout)
+        # 1. 默认应用设置
+        if mode in ["all", "apps"]:
+            # 文本编辑器
+            editor_layout = QHBoxLayout()
+            editor_layout.addWidget(QLabel("文本编辑器:"))
+            self.editor_path = QLineEdit(self.config.get("text_editor", ""))
+            editor_layout.addWidget(self.editor_path)
+            editor_btn = QPushButton("浏览...")
+            editor_btn.clicked.connect(lambda: self.browse_path("text_editor", self.editor_path))
+            editor_layout.addWidget(editor_btn)
+            layout.addLayout(editor_layout)
+            
+            # PDF阅读器
+            pdf_layout = QHBoxLayout()
+            pdf_layout.addWidget(QLabel("PDF阅读器 (可选):"))
+            self.pdf_path = QLineEdit(self.config.get("pdf_viewer", ""))
+            pdf_layout.addWidget(self.pdf_path)
+            pdf_btn = QPushButton("浏览...")
+            pdf_btn.clicked.connect(lambda: self.browse_path("pdf_viewer", self.pdf_path))
+            pdf_layout.addWidget(pdf_btn)
+            layout.addLayout(pdf_layout)
         
-        # 3. PDF阅读器
-        pdf_layout = QHBoxLayout()
-        pdf_layout.addWidget(QLabel("PDF阅读器 (可选):"))
-        self.pdf_path = QLineEdit(self.config.get("pdf_viewer", ""))
-        pdf_layout.addWidget(self.pdf_path)
-        pdf_btn = QPushButton("浏览...")
-        pdf_btn.clicked.connect(lambda: self.browse_path("pdf_viewer", self.pdf_path))
-        pdf_layout.addWidget(pdf_btn)
-        layout.addLayout(pdf_layout)
+        # 2. 宽度设置
+        if mode in ["all", "width"]:
+            width_layout = QHBoxLayout()
+            width_layout.addWidget(QLabel("预览器全屏宽度 (px):"))
+            self.max_width_spin = QSpinBox()
+            self.max_width_spin.setRange(500, 5000)
+            self.max_width_spin.setSingleStep(50)
+            self.max_width_spin.setValue(self.config.get("max_width", 1350))
+            width_layout.addWidget(self.max_width_spin)
+            width_layout.addStretch()
+            layout.addLayout(width_layout)
+            
+            info_label = QLabel("注：此宽度仅在编辑器隐藏时生效。编辑器显示时保持默认宽度。")
+            info_label.setStyleSheet("color: #666; font-size: 11px;")
+            layout.addWidget(info_label)
         
         layout.addStretch()
         
@@ -1296,10 +1327,13 @@ class SettingsDialog(QDialog):
             line_edit.setText(filename)
 
     def get_config(self):
-        return {
-            "text_editor": self.editor_path.text(),
-            "pdf_viewer": self.pdf_path.text()
-        }
+        config = {}
+        if self.mode in ["all", "apps"]:
+            config["text_editor"] = self.editor_path.text()
+            config["pdf_viewer"] = self.pdf_path.text()
+        if self.mode in ["all", "width"]:
+            config["max_width"] = self.max_width_spin.value()
+        return config
 
 
 class MarkdownEditor(QMainWindow):
@@ -1365,7 +1399,8 @@ class MarkdownEditor(QMainWindow):
             "text_editor": None,
             "pdf_viewer": None,
             "recent_files": [],
-            "pinned_files": []
+            "pinned_files": [],
+            "max_width": 1350 # 编辑器不可见时的默认宽度
         }
         if os.path.exists(self.config_file):
             try:
@@ -1680,9 +1715,48 @@ class MarkdownEditor(QMainWindow):
         self.addAction(search_action) # Add global shortcut
 
         # 5.6 Settings
-        settings_action = QAction("⚙️ 设置", self)
-        settings_action.triggered.connect(self.open_settings)
-        toolbar.addAction(settings_action)
+        settings_btn = QToolButton()
+        settings_btn.setText("⚙️ 设置")
+        settings_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        # 移除小箭头 (CSS 隐藏 menu-indicator)
+        settings_btn.setStyleSheet("""
+            QToolButton::menu-indicator {
+                image: none;
+            }
+        """)
+        
+        settings_menu = QMenu(self)
+        # 简洁样式：无边框阴影，统一背景 (参考文件菜单)
+        settings_menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d0d0d0;
+            }
+            QMenu::item {
+                padding: 6px 20px;
+                background-color: transparent;
+            }
+            QMenu::item:selected {
+                background-color: #f0f0f0;
+                color: #000000;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #e0e0e0;
+                margin: 4px 0px;
+            }
+        """)
+        
+        apps_action = QAction("默认打开方式", self)
+        apps_action.triggered.connect(self.show_settings_apps)
+        settings_menu.addAction(apps_action)
+        
+        width_action = QAction("预览器宽度", self)
+        width_action.triggered.connect(self.show_settings_width)
+        settings_menu.addAction(width_action)
+        
+        settings_btn.setMenu(settings_menu)
+        toolbar.addWidget(settings_btn)
 
 
         # Spacer to push View controls to the right
@@ -2141,14 +2215,29 @@ class MarkdownEditor(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "错误", f"表格助手出错:\n{str(e)}")
 
-    def open_settings(self):
-        """打开设置对话框"""
-        dialog = SettingsDialog(self, self.config)
-        if dialog.exec():
+    def show_settings_apps(self):
+        """显示默认应用设置"""
+        self._show_settings_dialog("apps")
+
+    def show_settings_width(self):
+        """显示宽度设置"""
+        self._show_settings_dialog("width")
+
+    def _show_settings_dialog(self, mode="all"):
+        """显示设置对话框"""
+        dialog = SettingsDialog(self, self.config, mode=mode)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             new_config = dialog.get_config()
             self.config.update(new_config)
             self.save_config()
             self.statusbar.showMessage("设置已保存", 3000)
+            
+            # 如果修改了宽度，立即应用到当前预览
+            if mode in ["all", "width"]:
+                for i in range(self.tab_widget.count()):
+                    tab = self.tab_widget.widget(i)
+                    if tab:
+                        tab.set_preview_expanded(getattr(tab, 'preview_expanded', False))
 
     def insert_color_tag(self):
         """插入颜色标签"""
