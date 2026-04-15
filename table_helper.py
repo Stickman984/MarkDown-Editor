@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
     QPlainTextEdit, QMenu
 )
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QFont, QColor, QAction, QIcon
+from PyQt6.QtGui import QFont, QColor, QAction, QIcon, QKeySequence
 import re
 import html.parser
 
@@ -47,7 +47,7 @@ class TableHelperDialog(QDialog):
     def __init__(self, parent=None, initial_content=None):
         super().__init__(parent)
         self.setWindowTitle("表格助手")
-        self.resize(800, 600)
+        self.resize(1100, 650)
         
         # 主要布局
         layout = QVBoxLayout(self)
@@ -82,18 +82,77 @@ class TableHelperDialog(QDialog):
         layout.addLayout(btn_layout)
         
         
+        # 初始化撤销重做支持
+        self.undo_stack = []
+        self.redo_stack = []
+        self._is_restoring = False
+        
+        # 动态绑定所有会修改表格的操作方法到撤销记录器
+        for method_name in [
+            'update_rows', 'update_cols', 'insert_row_above', 'insert_row_below',
+            'delete_selected_rows', 'insert_col_left', 'insert_col_right',
+            'delete_selected_cols', 'merge_cells', 'split_cells', 'set_alignment',
+            'toggle_bold', 'set_color', 'import_from_clipboard'
+        ]:
+            if hasattr(self, method_name):
+                setattr(self, method_name, self.make_undoable(getattr(self, method_name)))
+
         # 初始化表格内容
         if initial_content and self.parse_content(initial_content):
             pass # 解析成功，表格已更新
         else:
             self.init_table_items()
+            
+        self.current_state = self.snapshot_state()
+        self.table.itemChanged.connect(self.on_item_changed)
 
 
     def create_toolbar(self):
-        # 第一行工具栏：尺寸、格式、导入
+        # 统一使用更现代的 Office 风格样式
+        toolbar_style = """
+            QToolBar {
+                background-color: #f3f2f1;
+                border-bottom: 1px solid #e1dfdd;
+                padding: 4px;
+                spacing: 8px;
+            }
+            QToolButton {
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 13px;
+            }
+            QToolButton:hover {
+                background-color: #e1dfdd;
+            }
+            QLabel {
+                font-weight: bold;
+                color: #323130;
+                padding-left: 8px;
+                padding-right: 4px;
+            }
+        """
+        
+        # 第一行：基础属性与格式 (尺寸、合并、对齐、字体)
         self.toolbar1 = QToolBar()
         self.toolbar1.setMovable(False)
+        self.toolbar1.setStyleSheet(toolbar_style)
         
+        # --- 撤销/重做 ---
+        self.action_undo = QAction("撤销", self)
+        self.action_undo.setShortcut(QKeySequence("Ctrl+Z"))
+        self.action_undo.triggered.connect(self.perform_undo)
+        self.action_undo.setEnabled(False)
+        self.toolbar1.addAction(self.action_undo)
+        
+        self.action_redo = QAction("重做", self)
+        self.action_redo.setShortcut(QKeySequence("Ctrl+Y"))
+        self.action_redo.triggered.connect(self.perform_redo)
+        self.action_redo.setEnabled(False)
+        self.toolbar1.addAction(self.action_redo)
+        self.toolbar1.addSeparator()
+        
+        # --- 尺寸组 ---
+        self.toolbar1.addWidget(QLabel("📏 尺寸:"))
         self.spin_rows = QSpinBox()
         self.spin_rows.setRange(1, 100)
         self.spin_rows.setValue(5)
@@ -106,22 +165,14 @@ class TableHelperDialog(QDialog):
         self.spin_cols.setSuffix(" 列")
         self.spin_cols.valueChanged.connect(self.update_cols)
         
-        self.toolbar1.addWidget(QLabel(" 尺寸: "))
         self.toolbar1.addWidget(self.spin_rows)
         self.toolbar1.addWidget(self.spin_cols)
         self.toolbar1.addSeparator()
         
-        # 合并/拆分
-        action_merge = QAction("合并单元格", self)
-        action_merge.triggered.connect(self.merge_cells)
-        self.toolbar1.addAction(action_merge)
+        # --- 对齐与样式 ---
+        self.toolbar1.addWidget(QLabel("📝 格式:"))
         
-        action_split = QAction("拆分单元格", self)
-        action_split.triggered.connect(self.split_cells)
-        self.toolbar1.addAction(action_split)
-        self.toolbar1.addSeparator()
-        
-        # 对齐方式
+        # 对齐
         action_align_left = QAction("居左", self)
         action_align_left.triggered.connect(lambda: self.set_alignment(Qt.AlignmentFlag.AlignLeft))
         self.toolbar1.addAction(action_align_left)
@@ -133,57 +184,259 @@ class TableHelperDialog(QDialog):
         action_align_right = QAction("居右", self)
         action_align_right.triggered.connect(lambda: self.set_alignment(Qt.AlignmentFlag.AlignRight))
         self.toolbar1.addAction(action_align_right)
-        self.toolbar1.addSeparator()
         
-        # 字体样式
+        # 字体
         action_bold = QAction("加粗", self)
         action_bold.setCheckable(True)
         action_bold.triggered.connect(self.toggle_bold)
         self.toolbar1.addAction(action_bold)
         
-        action_color = QAction("设置颜色", self)
+        action_color = QAction("🎨 颜色", self)
         action_color.triggered.connect(self.set_color)
         self.toolbar1.addAction(action_color)
-        self.toolbar1.addSeparator()
-
-        action_paste = QAction("📋 导入表格...", self)
+        
+        # 导入按钮放到右侧
+        spacer = QWidget()
+        spacer.setSizePolicy(spacer.sizePolicy().Policy.Expanding, spacer.sizePolicy().Policy.Preferred)
+        self.toolbar1.addWidget(spacer)
+        
+        action_paste = QAction("📋 导入表格数据...", self)
         action_paste.triggered.connect(self.import_from_clipboard)
         self.toolbar1.addAction(action_paste)
 
-        # 第二行工具栏：行列操作
+        # 第二行：单元格级结构操作 (合并拆分、行列增删)
         self.toolbar2 = QToolBar()
         self.toolbar2.setMovable(False)
+        self.toolbar2.setStyleSheet(toolbar_style)
         
-        self.toolbar2.addWidget(QLabel(" 行操作: "))
-        action_insert_row_up = QAction("🔼 向上插入行", self)
+        # --- 合并/拆分 ---
+        self.toolbar2.addWidget(QLabel("🔗 结构:"))
+        action_merge = QAction("合并单元格", self)
+        action_merge.triggered.connect(self.merge_cells)
+        self.toolbar2.addAction(action_merge)
+        
+        action_split = QAction("拆分单元格", self)
+        action_split.triggered.connect(self.split_cells)
+        self.toolbar2.addAction(action_split)
+        self.toolbar2.addSeparator()
+        
+        # --- 行列操作 ---
+        self.toolbar2.addWidget(QLabel("➕ 行操作:"))
+        action_insert_row_up = QAction("↑ 上插行", self)
         action_insert_row_up.triggered.connect(self.insert_row_above)
         self.toolbar2.addAction(action_insert_row_up)
 
-        action_insert_row_down = QAction("🔽 向下插入行", self)
+        action_insert_row_down = QAction("↓ 下插行", self)
         action_insert_row_down.triggered.connect(self.insert_row_below)
         self.toolbar2.addAction(action_insert_row_down)
 
-        action_del_row = QAction("❌ 删除选中行", self)
+        action_del_row = QAction("❌ 删行", self)
         action_del_row.triggered.connect(self.delete_selected_rows)
         self.toolbar2.addAction(action_del_row)
-
+        
         self.toolbar2.addSeparator()
-
-        self.toolbar2.addWidget(QLabel(" 列操作: "))
-        action_insert_col_left = QAction("◀️ 向左插入列", self)
+        
+        self.toolbar2.addWidget(QLabel("➕ 列操作:"))
+        action_insert_col_left = QAction("← 左插列", self)
         action_insert_col_left.triggered.connect(self.insert_col_left)
         self.toolbar2.addAction(action_insert_col_left)
 
-        action_insert_col_right = QAction("▶️ 向右插入列", self)
+        action_insert_col_right = QAction("→ 右插列", self)
         action_insert_col_right.triggered.connect(self.insert_col_right)
         self.toolbar2.addAction(action_insert_col_right)
 
-        action_del_col = QAction("❌ 删除选中列", self)
+        action_del_col = QAction("❌ 删列", self)
         action_del_col.triggered.connect(self.delete_selected_cols)
         self.toolbar2.addAction(action_del_col)
 
+        # ---------------- 颜色主题应用 ----------------
+        # 格式化组 (蓝)
+        for act in [action_align_left, action_align_center, action_align_right, action_bold, action_color]:
+            self._style_action(self.toolbar1, act, "#e8f0fe", "#1a73e8", "#d2e3fc")
+            
+        # 结构组 (黄)
+        for act in [action_merge, action_split]:
+            self._style_action(self.toolbar2, act, "#fef7e0", "#b06000", "#fce8b2")
+            
+        # 插入行列组 (绿)
+        for act in [action_insert_row_up, action_insert_row_down, action_insert_col_left, action_insert_col_right]:
+            self._style_action(self.toolbar2, act, "#e6f4ea", "#137333", "#ceead6")
+            
+        # 删除行列组 (红)
+        for act in [action_del_row, action_del_col]:
+            self._style_action(self.toolbar2, act, "#fce8e6", "#c5221f", "#fad2cf")
+            
+        # 导入按钮 (强调紫)
+        self._style_action(self.toolbar1, action_paste, "#f3e8fd", "#681da8", "#e9d2fc")
+        
+        # 撤销重做 (青色)
+        for act in [self.action_undo, self.action_redo]:
+            self._style_action(self.toolbar1, act, "#e0f7fa", "#006064", "#b2ebf2")
+
+    def _style_action(self, toolbar, action, bg_color, text_color, hover_color):
+        """给工具栏中特定 Action 的按钮设置颜色样式"""
+        btn = toolbar.widgetForAction(action)
+        if btn:
+            btn.setStyleSheet(f"""
+                QToolButton {{
+                    background-color: {bg_color};
+                    color: {text_color};
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                    font-size: 13px;
+                }}
+                QToolButton:hover {{
+                    background-color: {hover_color};
+                }}
+            """)
+            
+    # ========================== 撤销/重做 快照机制 ==========================
+    
+    def snapshot_state(self):
+        state = {
+            'rows': self.table.rowCount(),
+            'cols': self.table.columnCount(),
+            'cells': []
+        }
+        for r in range(state['rows']):
+            for c in range(state['cols']):
+                item = self.table.item(r, c)
+                if item:
+                    font = item.font()
+                    fg = item.foreground().color()
+                    state['cells'].append({
+                        'r': r, 'c': c,
+                        'text': item.text(),
+                        'align': int(item.textAlignment()),
+                        'bold': font.bold(),
+                        'color': fg.name() if fg.isValid() else None,
+                        'rowspan': self.table.rowSpan(r, c),
+                        'colspan': self.table.columnSpan(r, c)
+                    })
+        return state
+
+    def restore_state(self, state):
+        self._is_restoring = True
+        self.table.blockSignals(True)
+        self.table.clear()
+        self.table.setRowCount(state['rows'])
+        self.table.setColumnCount(state['cols'])
+        self._sync_spin_boxes()
+
+        spans_to_set = []
+        for cell in state['cells']:
+            r, c = cell['r'], cell['c']
+            item = QTableWidgetItem(cell['text'])
+            item.setTextAlignment(Qt.AlignmentFlag(cell['align']))
+            if cell['bold']:
+                f = item.font()
+                f.setBold(True)
+                item.setFont(f)
+            if cell['color']:
+                item.setForeground(QColor(cell['color']))
+            self.table.setItem(r, c, item)
+            
+            rs, cs = cell.get('rowspan', 1), cell.get('colspan', 1)
+            if rs > 1 or cs > 1:
+                spans_to_set.append((r, c, rs, cs))
+                
+        for span in spans_to_set:
+            self.table.setSpan(*span)
+
+        self.table.blockSignals(False)
+        self._is_restoring = False
+
+    def save_undo_state(self):
+        if getattr(self, '_is_restoring', False):
+            return
+        if not hasattr(self, 'current_state'):
+            return
+        self.undo_stack.append(self.current_state)
+        if len(self.undo_stack) > 50:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+        self.update_action_states()
+
+    def update_current_state(self):
+        if getattr(self, '_is_restoring', False):
+            return
+        self.current_state = self.snapshot_state()
+
+    def perform_undo(self):
+        if not self.undo_stack:
+            return
+        self.redo_stack.append(self.current_state)
+        state = self.undo_stack.pop()
+        self.restore_state(state)
+        self.current_state = state
+        self.update_action_states()
+
+    def perform_redo(self):
+        if not self.redo_stack:
+            return
+        self.undo_stack.append(self.current_state)
+        state = self.redo_stack.pop()
+        self.restore_state(state)
+        self.current_state = state
+        self.update_action_states()
+
+    def update_action_states(self):
+        self.action_undo.setEnabled(len(self.undo_stack) > 0)
+        self.action_redo.setEnabled(len(self.redo_stack) > 0)
+
+    def on_item_changed(self, item):
+        """处理直接的手动输入修改"""
+        if getattr(self, '_is_restoring', False):
+            return
+        # 手动输入一个字母后，立刻快照
+        self.save_undo_state()
+        self.update_current_state()
+
+    def make_undoable(self, func):
+        """装饰器：将一个修改功能封装为支持状态快照的撤销步"""
+        import inspect
+        sig = inspect.signature(func)
+        def wrapper(*args, **kwargs):
+            # 避免 Qt 信号（如 Action.triggered 的 checked 标记）强行传入不需要参数的函数
+            num_params = len([p for p in sig.parameters.values() if p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)])
+            valid_args = args[:num_params]
+            
+            if getattr(self, '_is_restoring', False):
+                return func(*valid_args, **kwargs)
+            self.save_undo_state()
+            self._is_restoring = True
+            try:
+                res = func(*valid_args, **kwargs)
+            finally:
+                self._is_restoring = False
+                self.update_current_state()
+            return res
+        return wrapper
+        
     def show_context_menu(self, pos):
         menu = QMenu(self)
+        
+        # 现代扁平化菜单样式
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: #ffffff;
+                border: 1px solid #d2d0ce;
+                padding: 4px 0px;
+            }
+            QMenu::item {
+                padding: 8px 32px 8px 24px;
+                color: #323130;
+                font-size: 13px;
+            }
+            QMenu::item:selected {
+                background-color: #f3f2f1;
+            }
+            QMenu::separator {
+                height: 1px;
+                background-color: #e1dfdd;
+                margin: 4px 0px;
+            }
+        """)
         
         # 行操作子菜单/项
         action_row_up = menu.addAction("🔼 向上插入行")
@@ -219,11 +472,11 @@ class TableHelperDialog(QDialog):
         menu.exec(self.table.viewport().mapToGlobal(pos))
 
     def init_table_items(self):
-        """确保每个单元格都有Item对象"""
+        """确保每个单元格都有Item对象，默认为空"""
         for r in range(self.table.rowCount()):
             for c in range(self.table.columnCount()):
                 if self.table.item(r, c) is None:
-                    self.table.setItem(r, c, QTableWidgetItem(f"Cell {r+1},{c+1}"))
+                    self.table.setItem(r, c, QTableWidgetItem(""))
 
     def update_rows(self, count):
         self.table.setRowCount(count)
