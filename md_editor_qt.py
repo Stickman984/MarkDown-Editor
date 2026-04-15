@@ -73,7 +73,100 @@ def get_config_path(filename):
 
 
 
+class FlatTooltip(QLabel):
+    """自定义扁平无阴影 Tooltip，替代系统自带的带阴影气泡。
+    通过 QApplication 的 event filter 拦截 ToolTip 事件来显示。
+    """
+    _instance = None
+
+    @classmethod
+    def get(cls):
+        if cls._instance is None:
+            cls._instance = FlatTooltip()
+        return cls._instance
+
+    def __init__(self):
+        super().__init__(None)
+        # 设置窗口标志：ToolTip 类型 + 绕过窗口管理器（去除 DWM 阴影）
+        self.setWindowFlags(
+            Qt.WindowType.ToolTip |
+            Qt.WindowType.FramelessWindowHint |
+            Qt.WindowType.BypassWindowManagerHint
+        )
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.setStyleSheet("""
+            QLabel {
+                background-color: #ffffff;
+                color: #323130;
+                border: 1px solid #d2d0ce;
+                padding: 4px 10px;
+                font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+                font-size: 14px;
+            }
+        """)
+        self._hide_timer = QTimer(self)
+        self._hide_timer.setSingleShot(True)
+        self._hide_timer.timeout.connect(self.hide)
+
+    def show_at(self, text, pos):
+        if not text:
+            self.hide()
+            return
+        # 去除 HTML 标签（如用了 <nobr>）以便显示纯文本
+        import re as _re
+        clean = _re.sub(r'<[^>]+>', '', text)
+        if not clean.strip():
+            self.hide()
+            return
+        self.setText(clean)
+        self.adjustSize()
+        # 偏移鼠标位置
+        self.move(pos.x() + 12, pos.y() + 16)
+        self.show()
+        self._hide_timer.start(5000)  # 5 秒后自动消失
+
+    def hide_tooltip(self):
+        self._hide_timer.stop()
+        self.hide()
+
+
+class TooltipEventFilter(QWidget):
+    """安装到 QApplication 的全局事件过滤器，拦截系统 ToolTip 事件"""
+    def __init__(self, app):
+        super().__init__(None)
+        app.installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        from PyQt6.QtCore import QEvent, QPoint
+        from PyQt6.QtWidgets import QTabBar
+        if event.type() == QEvent.Type.ToolTip:
+            tip_text = ''
+            # 特判 QTabBar：通过鼠标局部坐标查找悬浮的 Tab 并读取其 Tooltip
+            if isinstance(obj, QTabBar):
+                # event.pos() 是鼠标在 TabBar 上的局部坐标
+                local_pos = event.pos() if hasattr(event, 'pos') else QPoint()
+                idx = obj.tabAt(local_pos)
+                if idx >= 0:
+                    tip_text = obj.tabToolTip(idx)
+            else:
+                tip_text = obj.toolTip() if hasattr(obj, 'toolTip') else ''
+            if not tip_text and hasattr(obj, 'statusTip'):
+                tip_text = obj.statusTip()
+            if tip_text:
+                FlatTooltip.get().show_at(tip_text, QCursor.pos())
+            else:
+                FlatTooltip.get().hide_tooltip()
+            return True  # 拦截，不让系统显示原生 tooltip
+        elif event.type() in (QEvent.Type.MouseMove, QEvent.Type.Leave,
+                               QEvent.Type.MouseButtonPress):
+            FlatTooltip.get().hide_tooltip()
+        return False
+
+
 class MarkdownHighlighter(QSyntaxHighlighter):
+
     """Markdown语法高亮器"""
     # ... (保持不变) ...
     def __init__(self, parent=None):
@@ -1848,7 +1941,7 @@ class MarkdownEditor(QMainWindow):
             }
             QTabBar::tab:selected {
                 background-color: #ffffff;
-                border-top: 3px solid #0969da;
+                border-top: 3px solid #eec1a1;
                 border-right: 1px solid #e1e4e8;
                 border-left: 1px solid #e1e4e8;
                 color: #24292e;
@@ -2072,7 +2165,7 @@ class MarkdownEditor(QMainWindow):
                 self.statusbar.showMessage(f"当前: {tab.current_file}")
             else:
                 self.statusbar.showMessage("就绪")
-                
+            
     def show_tab_context_menu(self, pos):
         """显示标签栏右键菜单"""
         index = self.tab_widget.tabBar().tabAt(pos)
@@ -3023,6 +3116,9 @@ def main():
     
     editor = MarkdownEditor()
     editor.activate_window_and_raise()
+    
+    # 安装全局扁平 Tooltip 过滤器（去除系统阴影）
+    _tooltip_filter = TooltipEventFilter(app)
     
     # 首次启动时的命令行处理
     if len(sys.argv) > 1:
