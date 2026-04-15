@@ -1699,16 +1699,19 @@ class MarkdownEditor(QMainWindow):
         
         # 4. Set Color
         color_action = QAction("🎨 颜色", self)
+        color_action.setToolTip("插入带颜色的特定文本标签")  # 这里自定义悬浮文字
         color_action.triggered.connect(self.insert_color_tag)
         toolbar.addAction(color_action)
         
         # 5. Table Helper
         table_action = QAction("📊 表格助手", self)
+        table_action.setToolTip("打开 Markdown 表格生成/编辑助手")  # 这里自定义悬浮文字
         table_action.triggered.connect(self.open_table_helper)
         toolbar.addAction(table_action)
         
         # 5.5 Search
         search_action = QAction("🔍 搜索", self)
+        search_action.setToolTip("在当前文件中搜索内容 (Ctrl+F)")  # 这里自定义悬浮文字
         search_action.setShortcut(QKeySequence("Ctrl+F"))
         search_action.triggered.connect(self.open_search)
         toolbar.addAction(search_action)
@@ -1803,6 +1806,10 @@ class MarkdownEditor(QMainWindow):
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
         # 监听标签页变动以移动 + 按钮
         self.tab_widget.tabBar().currentChanged.connect(self.reposition_add_button)
+        
+        # 开启TabBar的右键菜单功能
+        self.tab_widget.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.tab_widget.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
         
         self.setCentralWidget(self.tab_widget)
         
@@ -1978,6 +1985,13 @@ class MarkdownEditor(QMainWindow):
                 title += " *"
             self.tab_widget.setTabText(index, title)
             
+            # 设置悬浮提示(Tooltip)为所在目录
+            if tab.current_file:
+                dir_path = os.path.dirname(os.path.abspath(tab.current_file))
+                self.tab_widget.setTabToolTip(index, f"位置: {dir_path}")
+            else:
+                self.tab_widget.setTabToolTip(index, "新标签页")
+            
             # 更新窗口标题
             if tab == self.get_current_tab():
                 window_title = "  "
@@ -2001,6 +2015,29 @@ class MarkdownEditor(QMainWindow):
                 self.statusbar.showMessage(f"当前: {tab.current_file}")
             else:
                 self.statusbar.showMessage("就绪")
+                
+    def show_tab_context_menu(self, pos):
+        """显示标签栏右键菜单"""
+        index = self.tab_widget.tabBar().tabAt(pos)
+        if index >= 0:
+            tab = self.tab_widget.widget(index)
+            if tab and getattr(tab, 'current_file', None):
+                menu = QMenu(self)
+                open_dir_action = QAction("打开所在文件夹", self)
+                
+                def open_folder():
+                    dir_path = os.path.dirname(os.path.abspath(tab.current_file))
+                    if os.path.exists(dir_path):
+                        os.startfile(dir_path)
+                        
+                open_dir_action.triggered.connect(open_folder)
+                menu.setStyleSheet("""
+                    QMenu { background-color: #ffffff; border: 1px solid #d0d0d0; }
+                    QMenu::item { padding: 4px 20px; }
+                    QMenu::item:selected { background-color: #f0f0f0; color: #000000; }
+                """)
+                menu.addAction(open_dir_action)
+                menu.exec(self.tab_widget.tabBar().mapToGlobal(pos))
                 
     def eventFilter(self, obj, event):
         """事件过滤器：处理最近文件右键菜单"""
