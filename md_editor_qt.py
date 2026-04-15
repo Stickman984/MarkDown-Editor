@@ -1640,12 +1640,35 @@ class MarkdownEditor(QMainWindow):
     def create_toolbar(self):
         """创建工具栏"""
         toolbar = QToolBar("Main")
-        # 设置工具栏样式：选中状态背景显示淡黄色
+        # 设置现代化扁平工具栏样式
         toolbar.setStyleSheet("""
+            QToolBar {
+                background-color: #f2f2f9;
+                border-bottom: 1px solid #e1e4e8;
+                padding: 2px 6px;
+                spacing: 8px;
+            }
+            QToolButton {
+                border: none;
+                border-radius: 2px;
+                padding: 4px 8px;
+                background-color: transparent;
+                font-size: 13px;
+                color: #24292e;
+            }
+            QToolButton:hover {
+                background-color: #f3f4f6;
+            }
             QToolButton:checked {
-                background-color: #f8f1ef; /* 淡黄色 */
-                border: 1px solid #F0E68C;
-                border-radius: 3px;
+                background-color: #f8f1ef;
+            }
+            QToolButton:pressed {
+                background-color: #ebedef;
+            }
+            QToolBar::separator {
+                width: 1px;
+                background-color: #e1e4e8;
+                margin: 4px 6px;
             }
         """)
         self.addToolBar(toolbar)
@@ -1802,6 +1825,41 @@ class MarkdownEditor(QMainWindow):
         """创建标签页容器"""
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
+        
+        # 现代化扁平Tab栏样式
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane {
+                border-top: 1px solid #e1e4e8;
+                background-color: #ffffff;
+            }
+            QTabBar::tab {
+                background-color: #f6f8fa;
+                border: none;
+                border-right: 1px solid #e1e4e8;
+                color: #586069;
+                padding: 8px 16px;
+                font-size: 13px;
+                min-width: 80px;
+                margin-top: 2px;
+            }
+            QTabBar::tab:hover {
+                background-color: #eaecef;
+                color: #24292e;
+            }
+            QTabBar::tab:selected {
+                background-color: #ffffff;
+                border-top: 3px solid #0969da;
+                border-right: 1px solid #e1e4e8;
+                border-left: 1px solid #e1e4e8;
+                color: #24292e;
+                font-weight: bold;
+                margin-top: 0px;
+            }
+            QTabBar::tab:first:selected {
+                border-left: none;
+            }
+        """)
+        
         self.tab_widget.tabCloseRequested.connect(self.close_tab)
         self.tab_widget.currentChanged.connect(self.on_tab_changed)
         # 监听标签页变动以移动 + 按钮
@@ -1819,23 +1877,22 @@ class MarkdownEditor(QMainWindow):
         self.add_tab_button.setToolTip("新建标签 (Ctrl+T)")
         self.add_tab_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.add_tab_button.setFixedSize(26, 26)
-        # 方块背景样式
+        # 扁平化透明背景样式
         self.add_tab_button.setStyleSheet("""
             QToolButton {
-                border: 1px solid #ddd;
-                background-color: #f5f5f5;
+                border: none;
+                background-color: transparent;
                 font-size: 18px;
-                font-weight: bold;
-                color: #555;
+                font-weight: normal;
+                color: #586069;
                 border-radius: 4px;
             }
             QToolButton:hover {
-                background-color: #e0e0e0;
-                border: 1px solid #ccc;
-                color: #000;
+                background-color: #eaecef;
+                color: #24292e;
             }
             QToolButton:pressed {
-                background-color: #d0d0d0;
+                background-color: #d1d5da;
             }
         """)
         self.add_tab_button.clicked.connect(self.new_tab)
