@@ -1432,7 +1432,10 @@ class SettingsDialog(QDialog):
 class MarkdownEditor(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(" ")
+        self.setWindowTitle("Tutu Markdown Editor")
+        # 移除默认系统标题栏，实现自定义界面
+        self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        
         # 初始化代码块暂存区
         self.code_block_stash = {}
         self.search_dialog = None
@@ -1732,15 +1735,7 @@ class MarkdownEditor(QMainWindow):
 
     def create_toolbar(self):
         """创建工具栏"""
-        toolbar = QToolBar("Main")
-        # 设置现代化扁平工具栏样式
-        toolbar.setStyleSheet("""
-            QToolBar {
-                background-color: #f2f2f9;
-                border-bottom: 1px solid #e1e4e8;
-                padding: 2px 6px;
-                spacing: 8px;
-            }
+        self.common_toolbtn_style = """
             QToolButton {
                 border: none;
                 border-radius: 2px;
@@ -1758,17 +1753,34 @@ class MarkdownEditor(QMainWindow):
             QToolButton:pressed {
                 background-color: #ebedef;
             }
+        """
+        
+        toolbar = QToolBar("Main")
+        # 设置现代化扁平工具栏样式
+        toolbar.setStyleSheet(self.common_toolbtn_style + """
+            QToolBar {
+                background-color: #f2f2f9;
+                border-bottom: 1px solid #e1e4e8;
+                padding: 2px 6px;
+                spacing: 8px;
+            }
             QToolBar::separator {
                 width: 1px;
                 background-color: #e1e4e8;
                 margin: 4px 6px;
             }
         """)
-        self.addToolBar(toolbar)
+        
+        # 0. Custom Title Bar: 使用自定义标题栏包裹现有工具栏
+        from ui_components.custom_title_bar import CustomTitleBar
+        logo_path = resource_path("./pic/logo-open_eyes.png")
+        self.custom_title_bar = CustomTitleBar(self, toolbar, logo_path)
+        # setMenuWidget 会把控件固定置于主窗口的最顶部
+        self.setMenuWidget(self.custom_title_bar)
         
         # 1. File Menu Button
         self.file_menu_btn = QToolButton(self)
-        self.file_menu_btn.setText("📄文件")
+        self.file_menu_btn.setText("文件")
         # 移除小箭头 (CSS 隐藏 menu-indicator)
         self.file_menu_btn.setStyleSheet("""
             QToolButton::menu-indicator {
@@ -1814,19 +1826,19 @@ class MarkdownEditor(QMainWindow):
         toolbar.addSeparator()
         
         # 4. Set Color
-        color_action = QAction("🎨 颜色", self)
+        color_action = QAction("颜色", self)
         color_action.setToolTip("插入带颜色的特定文本标签")  # 这里自定义悬浮文字
         color_action.triggered.connect(self.insert_color_tag)
         toolbar.addAction(color_action)
         
         # 5. Table Helper
-        table_action = QAction("📊 表格助手", self)
+        table_action = QAction("表格助手", self)
         table_action.setToolTip("打开 Markdown 表格生成/编辑助手")  # 这里自定义悬浮文字
         table_action.triggered.connect(self.open_table_helper)
         toolbar.addAction(table_action)
         
         # 5.5 Search
-        search_action = QAction("🔍 搜索", self)
+        search_action = QAction("搜索", self)
         search_action.setToolTip("在当前文件中搜索内容 (Ctrl+F)")  # 这里自定义悬浮文字
         search_action.setShortcut(QKeySequence("Ctrl+F"))
         search_action.triggered.connect(self.open_search)
@@ -1835,7 +1847,7 @@ class MarkdownEditor(QMainWindow):
 
         # 5.6 Settings
         settings_btn = QToolButton()
-        settings_btn.setText("⚙️ 设置")
+        settings_btn.setText("设置")
         settings_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         # 移除小箭头 (CSS 隐藏 menu-indicator)
         settings_btn.setStyleSheet("""
@@ -1878,33 +1890,25 @@ class MarkdownEditor(QMainWindow):
         toolbar.addWidget(settings_btn)
 
 
-        # Spacer to push View controls to the right
-        spacer = QWidget()
-        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        toolbar.addWidget(spacer)
-        
-        # 6. View Controls (Right Aligned)
+        # 6. View Controls (Now moved to TabBar Corner, we keep the QActions for logic)
         
         # Editor Toggle
         self.toggle_editor_action = QAction("📝 编辑器", self)
         self.toggle_editor_action.setCheckable(True)
         self.toggle_editor_action.setChecked(True)
         self.toggle_editor_action.triggered.connect(self.toggle_editor)
-        toolbar.addAction(self.toggle_editor_action)
         
         # Preview Toggle
         self.toggle_preview_action = QAction("🖼 预览", self)
         self.toggle_preview_action.setCheckable(True)
         self.toggle_preview_action.setChecked(True)
         self.toggle_preview_action.triggered.connect(self.toggle_preview)
-        toolbar.addAction(self.toggle_preview_action)
         
         # TOC Toggle
         self.toggle_toc_toolbar_action = QAction("📑 目录", self)
         self.toggle_toc_toolbar_action.setCheckable(True)
-        self.toggle_toc_toolbar_action.setChecked(False) # Default hidden? Or Check initial state
+        self.toggle_toc_toolbar_action.setChecked(False) # Default hidden
         self.toggle_toc_toolbar_action.triggered.connect(self.toggle_toc)
-        toolbar.addAction(self.toggle_toc_toolbar_action)
 
 
     
@@ -1962,6 +1966,29 @@ class MarkdownEditor(QMainWindow):
         self.tab_widget.tabBar().setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tab_widget.tabBar().customContextMenuRequested.connect(self.show_tab_context_menu)
         
+        # --- 创建右上角角标控件 (View Toggles) ---
+        corner_widget = QWidget()
+        corner_layout = QHBoxLayout(corner_widget)
+        corner_layout.setContentsMargins(0, 0, 10, 0) # 右边距10像素
+        corner_layout.setSpacing(6)
+        
+        # 复用已有的 QAction
+        btn_editor = QToolButton()
+        btn_editor.setDefaultAction(self.toggle_editor_action)
+        
+        btn_preview = QToolButton()
+        btn_preview.setDefaultAction(self.toggle_preview_action)
+        
+        btn_toc = QToolButton()
+        btn_toc.setDefaultAction(self.toggle_toc_toolbar_action)
+        
+        for btn in (btn_editor, btn_preview, btn_toc):
+            btn.setStyleSheet(self.common_toolbtn_style)
+            corner_layout.addWidget(btn)
+            
+        self.tab_widget.setCornerWidget(corner_widget, Qt.Corner.TopRightCorner)
+        # ------------------------------------
+
         self.setCentralWidget(self.tab_widget)
         
         # 添加新建标签按钮 (+) 到标签栏
@@ -2022,12 +2049,16 @@ class MarkdownEditor(QMainWindow):
         """窗口大小改变事件"""
         super().resizeEvent(event)
         if hasattr(self, 'tab_widget') and hasattr(self, 'background_label'):
-            # 调整背景标签大小为tab_widget的内容区域
-            self.background_label.setGeometry(self.tab_widget.rect())
+            # 调整背景标签大小为tab_widget的内容区域 (避开上方的 TabBar)
+            tab_bar_h = self.tab_widget.tabBar().height()
+            self.background_label.setGeometry(
+                0, tab_bar_h,
+                self.tab_widget.width(), self.tab_widget.height() - tab_bar_h
+            )
             
             # 如果有背景图片，重新缩放以适应窗口大小
             if hasattr(self, 'background_pixmap') and self.background_pixmap:
-                size = self.tab_widget.size()
+                size = self.background_label.size()
                 scaled_pixmap = self.background_pixmap.scaled(
                     size.width(), size.height(),
                     Qt.AspectRatioMode.KeepAspectRatio,
@@ -2046,6 +2077,10 @@ class MarkdownEditor(QMainWindow):
             # 确保 + 按钮再次 raise 以便点击
             self.add_tab_button.show()
             self.add_tab_button.raise_()
+            # 确保右上角视图切换控件 (CornerWidget) 也能被点击和显示
+            corner = self.tab_widget.cornerWidget()
+            if corner:
+                corner.raise_()
         else:
             self.background_label.hide()
             self.add_tab_button.show()
@@ -2302,6 +2337,15 @@ class MarkdownEditor(QMainWindow):
         tab = self.get_current_tab()
         if tab:
             tab.save_file()
+            self.trigger_save_animation()
+            
+    def trigger_save_animation(self):
+        closed_logo = resource_path("./pic/logo-close_eyes.png")
+        open_logo = resource_path("./pic/logo-open_eyes.png")
+        if hasattr(self, 'custom_title_bar'):
+            self.custom_title_bar.set_logo(closed_logo)
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(500, lambda: self.custom_title_bar.set_logo(open_logo))
     
     def save_file_as(self):
         """另存为"""
