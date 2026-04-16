@@ -1435,6 +1435,8 @@ class MarkdownEditor(QMainWindow):
         self.setWindowTitle("Tutu Markdown Editor")
         # 移除默认系统标题栏，实现自定义界面
         self.setWindowFlags(self.windowFlags() | Qt.WindowType.FramelessWindowHint)
+        self.setObjectName("MainWindow")
+        self.setStyleSheet("#MainWindow { border: 1px solid #c0c0c0; }")
         
         # 初始化代码块暂存区
         self.code_block_stash = {}
@@ -2028,7 +2030,7 @@ class MarkdownEditor(QMainWindow):
         self.background_label.setScaledContents(False)  # 不拉伸内容
         
         # 尝试加载背景图片
-        bg_path = resource_path("./pic/cat_background_1764666718697.png")
+        bg_path = resource_path("./pic/cat_splash_clean.png")
         if os.path.exists(bg_path):
             pixmap = QPixmap(bg_path)
             # 保持宽高比缩放图片

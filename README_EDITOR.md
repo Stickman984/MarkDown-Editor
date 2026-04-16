@@ -57,6 +57,6 @@ python md_editor_qt.py
 ## 📦 打包建议
 如果需要打包成 `.exe` 文件，建议使用 PyInstaller：
 ```bash
-pyinstaller --noconsole --onefile --name="MarkdownEditor" md_editor_qt.py
-pyinstaller --noconsole --icon="./pic/Gemini_Generated_Image_t2ldymt2ldymt2ld.png" --add-data "./pic/cat_background_1764666718697.png;pic" --add-data "./pic/Gemini_Generated_Image_t2ldymt2ldymt2ld.png;pic" --name="Tutu" md_editor_qt.py
+pyinstaller --noconsole --onefile --name="Tutu" md_editor_qt.py
+pyinstaller --noconsole --icon="./pic/logo-open_eyes.png" --add-data "./pic;pic" --name="Tutu" md_editor_qt.py
 ```
