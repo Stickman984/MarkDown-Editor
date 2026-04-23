@@ -1,2 +1,62 @@
-# MarkDown-Editor
-A Markdown editor that facilitates interaction with local files.
+# Markdown 编辑器 (Qt版)
+
+一个基于 PyQt6 的现代化 Markdown 编辑器，支持实时预览、多标签页、目录导航和丰富的快捷键操作。
+
+## ✨ 主要特性
+
+### 核心功能
+- **多标签页管理**：支持同时打开和编辑多个 Markdown 文件。
+- **实时预览**：左侧编辑 Markdown，右侧实时渲染 HTML 效果。
+- **同步滚动**：编辑器和预览窗口滚动位置自动同步。
+- **目录导航**：自动生成文档大纲，点击标题快速跳转（默认隐藏，可开启）。
+- **拖放支持**：支持直接拖拽文件到窗口或程序图标打开。
+
+### 智能链接处理
+- **Markdown 文件** (`.md`)：自动在新标签页中打开。
+- **文本文件** (`.txt`, `.py`, `.json` 等)：自动调用 Notepad++ 打开（如果已安装）。
+- **文件夹**：自动打开 Windows 资源管理器。
+- **网页链接**：自动调用默认浏览器打开。
+
+### 便捷操作
+- **独立缩放**：
+  - 鼠标指向编辑器：`Ctrl + 滚轮` 缩放编辑器字体。
+  - 鼠标指向预览：`Ctrl + 滚轮` 缩放预览页面。
+- **拖拽调整**：可自由拖动编辑器、预览和目录之间的分隔线调整宽度。
+
+## 🚀 快捷键
+
+| 功能 | 快捷键 |
+|------|--------|
+| **新建标签页** | `Ctrl + T` |
+| **关闭标签页** | `Ctrl + W` |
+| **新建文件** | `Ctrl + N` |
+| **打开文件** | `Ctrl + O` |
+| **保存文件** | `Ctrl + S` |
+| **另存为** | `Ctrl + Shift + S` |
+| **退出程序** | `Alt + F4` |
+
+## 🛠️ 安装与运行
+
+### 依赖安装
+确保已安装 Python 3.x，然后安装所需库：
+```bash
+pip install PyQt6 PyQt6-WebEngine markdown
+```
+
+### 运行
+```bash
+python md_editor_qt.py
+```
+
+## 📝 使用说明
+
+1. **启动**：程序启动后为空白窗口，您可以点击工具栏的"新建"或"打开"开始工作。
+2. **目录**：点击工具栏最右侧的 "📑 目录" 按钮，可在右侧显示/隐藏文档大纲。
+3. **视图控制**：在"视图"菜单或工具栏中，可以单独隐藏编辑器或预览窗口。
+
+## 📦 打包建议
+如果需要打包成 `.exe` 文件，建议使用 PyInstaller：
+```bash
+pyinstaller --noconsole --onefile --name="Tutu" md_editor_qt.py
+pyinstaller --noconsole --icon="./pic/logo-open_eyes.png" --add-data "./pic;pic" --name="Tutu" md_editor_qt.py
+```
