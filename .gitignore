@@ -1,6 +1,8 @@
 dist/
 build/
 test/
+.venv/
+__pycache__/
 *.png
 *.jpg
 *.gif
